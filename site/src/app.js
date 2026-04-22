@@ -457,12 +457,7 @@ function renderOverview() {
 function renderChecklistTabs() {
   const checklistName = getChecklistLabel();
   setText(elements.checklistTitle, `${checklistName} 공간 점검`);
-  setText(
-    elements.checklistDescription,
-    state.selectedChecklistType === "open"
-      ? "오픈 준비에 필요한 공간별 확인 여부와 댓글형 메모를 관리합니다."
-      : "마감 확인에 필요한 공간별 상태와 댓글형 메모를 관리합니다.",
-  );
+  setText(elements.checklistDescription, "");
 
   elements.checklistTabs.forEach((button) => {
     if (!button.dataset.checklistType) return;
@@ -512,7 +507,7 @@ function renderChecklistSummary() {
   const uncheckedCount = Math.max(spaces.length - checkedCount, 0);
 
   setText(elements.summaryCount, `체크가 필요한 곳 ${uncheckedCount} · 체크를 완료한 곳 ${checkedCount}`);
-  setText(elements.summaryCaption, "메모는 세부 보기 안에서 댓글처럼 계속 등록됩니다.");
+  setText(elements.summaryCaption, "");
 }
 
 function buildSpaceCard(space) {

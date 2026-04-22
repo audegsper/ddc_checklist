@@ -305,7 +305,9 @@ button {
 
 .space-group__header,
 .history-group__header {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
 }
 
 .space-group__count {
@@ -341,8 +343,9 @@ button {
 }
 
 .checklist-summary__meta {
-  display: grid;
-  gap: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .checklist-switch {
@@ -423,9 +426,10 @@ button:hover,
 }
 
 .ghost-button--compact {
-  min-width: 72px;
-  padding: 10px 12px;
-  font-size: 13px;
+  min-width: 56px;
+  margin-left: auto;
+  padding: 7px 10px;
+  font-size: 12px;
 }
 
 .ghost-button.is-complete {
@@ -668,6 +672,17 @@ button:hover,
   background: var(--warning-text);
 }
 
+.calendar-nav {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.calendar-nav strong {
+  flex: 1;
+  text-align: center;
+  line-height: 42px;
+}
+
 .history-item__meta,
 .history-comments__title {
   display: block;
@@ -727,8 +742,6 @@ button:hover,
   .hero__meta,
   .space-card__actions,
   .inline-form,
-  .history-toolbar,
-  .calendar-nav,
   .card__title-row,
   .manage-space-card__summary-row,
   .comment-item__actions,
@@ -740,6 +753,16 @@ button:hover,
 
   .checklist-switch {
     grid-template-columns: 1fr;
+  }
+
+  .calendar-nav {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .history-toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .tabs {
@@ -757,7 +780,4 @@ button:hover,
     padding: 8px;
   }
 
-  .ghost-button--compact {
-    width: 100%;
-  }
 }
