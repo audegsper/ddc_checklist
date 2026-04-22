@@ -6,7 +6,7 @@
     <title>병원 체크리스트</title>
     <meta
       name="description"
-      content="직원별 공간 점검과 메모를 기록하는 모바일 병원 체크리스트"
+      content="병원 오픈 및 마감 점검을 기록하는 모바일 체크리스트"
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -27,7 +27,13 @@
           </div>
           <div id="sync-pill" class="sync-pill">데모 모드</div>
         </div>
-        <div class="hero__card">
+
+        <div class="hero__segment" role="tablist" aria-label="체크리스트 종류">
+          <button class="hero-tab is-active" data-checklist-type="open">오픈 체크리스트</button>
+          <button class="hero-tab" data-checklist-type="close">마감 체크리스트</button>
+        </div>
+
+        <div id="employee-card" class="hero__card">
           <label class="field">
             <span class="field__label">현재 담당 직원</span>
             <select id="employee-select"></select>
@@ -47,10 +53,21 @@
         <section class="panel is-active" data-panel="checklist">
           <div class="section-title">
             <div>
-              <h2>공간 점검</h2>
-              <p>공간별 확인 버튼과 특이사항 메모를 남길 수 있습니다.</p>
+              <h2 id="checklist-title">오픈 공간 점검</h2>
+              <p id="checklist-description">
+                공간별 확인 여부를 표시하고 필요한 경우 메모를 남길 수 있습니다.
+              </p>
             </div>
           </div>
+
+          <div class="summary-card checklist-summary">
+            <div>
+              <strong id="summary-count">0 / 0 공간 확인 완료</strong>
+              <p id="summary-caption" class="helper-text">최종 결과를 기록으로 넘기기 전까지 현재 상태를 유지합니다.</p>
+            </div>
+            <button id="finalize-button" class="ghost-button">오늘 결과 기록으로 넘기기</button>
+          </div>
+
           <div id="spaces-list" class="space-list"></div>
         </section>
 
@@ -58,7 +75,7 @@
           <div class="section-title">
             <div>
               <h2>기본 정보 관리</h2>
-              <p>직원과 공간을 추가하고, 공간별 체크 항목 메모를 정리합니다.</p>
+              <p>직원, 공간, 오픈/마감 체크 항목, 공간 순서를 관리합니다.</p>
             </div>
           </div>
 
@@ -84,11 +101,21 @@
         <section class="panel" data-panel="history">
           <div class="section-title">
             <div>
-              <h2>최근 기록</h2>
-              <p>최근 보관된 체크와 메모 기록을 시간순으로 확인합니다.</p>
+              <h2>기록</h2>
+              <p>하루가 끝날 때 넘긴 최종 결과를 날짜별로 확인합니다.</p>
             </div>
           </div>
-          <div id="history-summary" class="summary-card"></div>
+
+          <div class="summary-card history-toolbar">
+            <div class="calendar-nav">
+              <button id="calendar-prev" class="secondary-button" type="button">이전 달</button>
+              <strong id="calendar-label"></strong>
+              <button id="calendar-next" class="secondary-button" type="button">다음 달</button>
+            </div>
+            <p id="history-summary" class="helper-text"></p>
+          </div>
+
+          <div id="calendar-grid" class="calendar-grid"></div>
           <div id="history-list" class="history-list"></div>
         </section>
 
@@ -96,21 +123,27 @@
           <div class="section-title">
             <div>
               <h2>설정</h2>
-              <p>기록 보관 개수와 Supabase 연결 상태를 확인합니다.</p>
+              <p>직원 표시 방식과 기록 보관 기간을 조정합니다.</p>
             </div>
           </div>
 
           <div class="card stack">
-            <h3>보관 개수</h3>
-            <form id="settings-form" class="settings-form">
+            <h3>동작 설정</h3>
+            <form id="settings-form" class="settings-form stack">
               <label class="field">
-                <span class="field__label">최근 기록 보관 개수</span>
+                <span class="field__label">기록 보관 날짜 수</span>
                 <input id="history-limit" type="number" min="1" max="365" step="1" />
               </label>
+
+              <label class="toggle-field">
+                <input id="show-employee-toggle" type="checkbox" />
+                <span>공간 점검 시 직원 이름 선택 및 표시 사용</span>
+              </label>
+
               <button type="submit">설정 저장</button>
             </form>
             <p class="helper-text">
-              현재 구현은 최근 기록 개수 기준으로 오래된 항목을 자동 정리합니다.
+              직원 표시를 끄면 체크 화면에서 직원 선택 영역이 숨겨지고 기록에도 이름을 표시하지 않습니다.
             </p>
           </div>
 
@@ -135,20 +168,38 @@
             <p class="space-card__eyebrow">점검 공간</p>
             <h3 class="space-card__name"></h3>
           </div>
-          <button class="ghost-button" data-action="confirm">확인</button>
+          <button class="ghost-button space-card__confirm" data-action="toggle-check">확인</button>
         </div>
-        <div class="space-card__memo surface">
-          <p class="surface__label">체크 항목</p>
-          <p class="space-card__template"></p>
+
+        <div class="space-card__status-row">
+          <span class="status-pill" data-role="check-state">미확인</span>
+          <span class="status-pill" data-role="comment-state">메모 없음</span>
+          <span class="helper-text" data-role="owner-state"></span>
         </div>
-        <label class="field">
-          <span class="field__label">특이사항 / 공유 메모</span>
-          <textarea class="space-card__comment" rows="4" placeholder="체크 후 공유할 내용을 적어 주세요."></textarea>
-        </label>
-        <div class="space-card__actions">
-          <button class="secondary-button" data-action="save-comment">메모 저장</button>
-          <p class="space-card__latest helper-text"></p>
-        </div>
+
+        <details class="space-card__details">
+          <summary>
+            세부 보기
+            <span class="space-card__summary-badges" data-role="summary-badges"></span>
+          </summary>
+
+          <div class="space-card__details-body">
+            <div class="surface">
+              <p class="surface__label">체크 항목</p>
+              <p class="space-card__template"></p>
+            </div>
+
+            <label class="field">
+              <span class="field__label">특이사항 / 공유 메모</span>
+              <textarea class="space-card__comment" rows="4" placeholder="체크 후 공유할 내용을 적어 주세요."></textarea>
+            </label>
+
+            <div class="space-card__actions">
+              <button class="secondary-button" data-action="save-comment">메모 저장</button>
+              <button class="secondary-button is-subtle" data-action="clear-comment">메모 지우기</button>
+            </div>
+          </div>
+        </details>
       </article>
     </template>
 

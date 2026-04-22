@@ -10,12 +10,14 @@ function normalizeBootstrap(data) {
     id: "settings_default",
     history_limit: 10,
     timezone: "Asia/Seoul",
+    show_employee_name: true,
   };
 
   return {
     employees: data.employees ?? [],
     spaces: data.spaces ?? [],
-    activity_logs: data.logs ?? [],
+    current_checks: data.current_checks ?? [],
+    archived_checks: data.archived_checks ?? [],
     app_settings: settings,
   };
 }
@@ -25,35 +27,53 @@ export async function createSupabaseRepository(config) {
   const client = createClient(config.supabaseUrl, config.supabaseAnonKey);
   const timezone = config.timezone || "Asia/Seoul";
 
-  async function pruneLogs() {
-    const { data: settingsRows } = await client
+  async function pruneArchivedChecks() {
+    const { data: settingsRows, error: settingsError } = await client
       .from("app_settings")
       .select("history_limit")
       .limit(1);
+    if (settingsError) throw settingsError;
 
     const historyLimit = Number(settingsRows?.[0]?.history_limit ?? 10);
-    const { data: logs } = await client
-      .from("activity_logs")
-      .select("id")
-      .order("created_at", { ascending: false });
+    const { data: archives, error: archiveError } = await client
+      .from("archived_checks")
+      .select("archive_date")
+      .order("archive_date", { ascending: false });
+    if (archiveError) throw archiveError;
 
-    const stale = (logs ?? []).slice(historyLimit).map((row) => row.id);
-    if (stale.length) {
-      await client.from("activity_logs").delete().in("id", stale);
+    const sortedDates = [...new Set((archives ?? []).map((item) => item.archive_date))];
+    const staleDates = sortedDates.slice(historyLimit);
+    if (staleDates.length) {
+      const { error } = await client.from("archived_checks").delete().in("archive_date", staleDates);
+      if (error) throw error;
     }
   }
 
   return {
     async getBootstrap() {
-      const [{ data: employees }, { data: spaces }, { data: logs }, { data: settings }] =
+      const workDate = getWorkDate(timezone);
+      const [{ data: employees, error: employeeError }, { data: spaces, error: spaceError }, { data: currentChecks, error: currentError }, { data: archivedChecks, error: archivedError }, { data: settings, error: settingsError }] =
         await Promise.all([
           client.from("employees").select("*").eq("is_active", true).order("created_at"),
           client.from("spaces").select("*").eq("is_active", true).order("sort_order"),
-          client.from("activity_logs").select("*").order("created_at", { ascending: false }),
+          client.from("current_checks").select("*").eq("work_date", workDate).order("updated_at", { ascending: false }),
+          client.from("archived_checks").select("*").order("archive_date", { ascending: false }).order("sort_order"),
           client.from("app_settings").select("*").limit(1),
         ]);
 
-      return normalizeBootstrap({ employees, spaces, logs, settings });
+      if (employeeError) throw employeeError;
+      if (spaceError) throw spaceError;
+      if (currentError) throw currentError;
+      if (archivedError) throw archivedError;
+      if (settingsError) throw settingsError;
+
+      return normalizeBootstrap({
+        employees,
+        spaces,
+        current_checks: currentChecks,
+        archived_checks: archivedChecks,
+        settings,
+      });
     },
 
     async addEmployee(name) {
@@ -67,24 +87,25 @@ export async function createSupabaseRepository(config) {
     },
 
     async addSpace(name) {
-      const { data: lastSpace } = await client
+      const { data: lastSpace, error: lastSpaceError } = await client
         .from("spaces")
         .select("sort_order")
         .order("sort_order", { ascending: false })
         .limit(1)
         .maybeSingle();
+      if (lastSpaceError) throw lastSpaceError;
 
       const { data, error } = await client
         .from("spaces")
         .insert({
           name,
-          checklist_template: "",
+          open_checklist_template: "",
+          close_checklist_template: "",
           is_active: true,
           sort_order: Number(lastSpace?.sort_order ?? 0) + 1,
         })
         .select()
         .single();
-
       if (error) throw error;
       return data;
     },
@@ -94,48 +115,158 @@ export async function createSupabaseRepository(config) {
       if (error) throw error;
     },
 
+    async reorderSpace(spaceId, direction) {
+      const { data: spaces, error: spacesError } = await client
+        .from("spaces")
+        .select("id, sort_order")
+        .eq("is_active", true)
+        .order("sort_order");
+      if (spacesError) throw spacesError;
+
+      const index = (spaces ?? []).findIndex((space) => space.id === spaceId);
+      const swapIndex = direction === "up" ? index - 1 : index + 1;
+      if (index < 0 || swapIndex < 0 || swapIndex >= spaces.length) return;
+
+      const current = spaces[index];
+      const target = spaces[swapIndex];
+
+      const { error: updateCurrentError } = await client
+        .from("spaces")
+        .update({ sort_order: target.sort_order })
+        .eq("id", current.id);
+      if (updateCurrentError) throw updateCurrentError;
+
+      const { error: updateTargetError } = await client
+        .from("spaces")
+        .update({ sort_order: current.sort_order })
+        .eq("id", target.id);
+      if (updateTargetError) throw updateTargetError;
+    },
+
     async updateSettings(patch) {
-      const { data: existing } = await client.from("app_settings").select("id").limit(1).maybeSingle();
+      const { data: existing, error: existingError } = await client
+        .from("app_settings")
+        .select("id")
+        .limit(1)
+        .maybeSingle();
+      if (existingError) throw existingError;
+
       if (!existing) {
         const { error } = await client.from("app_settings").insert({
           history_limit: Number(patch.history_limit ?? 10),
           timezone,
+          show_employee_name: Boolean(patch.show_employee_name ?? true),
         });
         if (error) throw error;
       } else {
         const { error } = await client.from("app_settings").update(patch).eq("id", existing.id);
         if (error) throw error;
       }
-      await pruneLogs();
+
+      await pruneArchivedChecks();
     },
 
-    async addCheck({ employeeId, employeeName, spaceId, spaceName }) {
-      const { error } = await client.from("activity_logs").insert({
-        entry_type: "check",
-        employee_id: employeeId,
-        employee_name: employeeName,
-        space_id: spaceId,
-        space_name: spaceName,
-        memo: "",
-        work_date: getWorkDate(timezone),
-      });
-      if (error) throw error;
-      await pruneLogs();
+    async saveCurrentCheck(payload) {
+      const workDate = payload.work_date ?? getWorkDate(timezone);
+      const { data: existing, error: existingError } = await client
+        .from("current_checks")
+        .select("*")
+        .eq("work_date", workDate)
+        .eq("checklist_type", payload.checklist_type)
+        .eq("space_id", payload.space_id)
+        .limit(1)
+        .maybeSingle();
+      if (existingError) throw existingError;
+
+      const nextPayload = {
+        work_date: workDate,
+        checklist_type: payload.checklist_type,
+        space_id: payload.space_id,
+        space_name: payload.space_name,
+        checked: payload.checked ?? existing?.checked ?? false,
+        comment: payload.comment ?? existing?.comment ?? "",
+        employee_id: payload.employee_id ?? existing?.employee_id ?? null,
+        employee_name: payload.employee_name ?? existing?.employee_name ?? "",
+        updated_at: new Date().toISOString(),
+      };
+
+      if (existing) {
+        const { error } = await client.from("current_checks").update(nextPayload).eq("id", existing.id);
+        if (error) throw error;
+      } else {
+        const { error } = await client.from("current_checks").insert(nextPayload);
+        if (error) throw error;
+      }
     },
 
-    async addComment({ employeeId, employeeName, spaceId, spaceName, memo }) {
-      const { error } = await client.from("activity_logs").insert({
-        entry_type: "comment",
-        employee_id: employeeId,
-        employee_name: employeeName,
-        space_id: spaceId,
-        space_name: spaceName,
-        memo,
-        work_date: getWorkDate(timezone),
+    async clearCurrentComment({ checklistType, spaceId, workDate }) {
+      const targetDate = workDate ?? getWorkDate(timezone);
+      const { data: existing, error: existingError } = await client
+        .from("current_checks")
+        .select("*")
+        .eq("work_date", targetDate)
+        .eq("checklist_type", checklistType)
+        .eq("space_id", spaceId)
+        .limit(1)
+        .maybeSingle();
+      if (existingError) throw existingError;
+
+      if (existing) {
+        const { error } = await client
+          .from("current_checks")
+          .update({ comment: "", updated_at: new Date().toISOString() })
+          .eq("id", existing.id);
+        if (error) throw error;
+      }
+    },
+
+    async finalizeChecklist({ checklistType, workDate }) {
+      const targetDate = workDate ?? getWorkDate(timezone);
+      const [{ data: spaces, error: spacesError }, { data: currentChecks, error: currentError }] =
+        await Promise.all([
+          client.from("spaces").select("*").eq("is_active", true).order("sort_order"),
+          client.from("current_checks").select("*").eq("work_date", targetDate).eq("checklist_type", checklistType),
+        ]);
+      if (spacesError) throw spacesError;
+      if (currentError) throw currentError;
+
+      const currentMap = new Map((currentChecks ?? []).map((item) => [item.space_id, item]));
+
+      const { error: deleteExistingArchiveError } = await client
+        .from("archived_checks")
+        .delete()
+        .eq("archive_date", targetDate)
+        .eq("checklist_type", checklistType);
+      if (deleteExistingArchiveError) throw deleteExistingArchiveError;
+
+      const archivePayload = (spaces ?? []).map((space) => {
+        const current = currentMap.get(space.id);
+        return {
+          archive_date: targetDate,
+          checklist_type: checklistType,
+          space_id: space.id,
+          space_name: space.name,
+          checked: Boolean(current?.checked),
+          comment: current?.comment ?? "",
+          employee_id: current?.employee_id ?? null,
+          employee_name: current?.employee_name ?? "",
+          sort_order: space.sort_order,
+        };
       });
-      if (error) throw error;
-      await pruneLogs();
+
+      if (archivePayload.length) {
+        const { error: insertArchiveError } = await client.from("archived_checks").insert(archivePayload);
+        if (insertArchiveError) throw insertArchiveError;
+      }
+
+      const { error: deleteCurrentError } = await client
+        .from("current_checks")
+        .delete()
+        .eq("work_date", targetDate)
+        .eq("checklist_type", checklistType);
+      if (deleteCurrentError) throw deleteCurrentError;
+
+      await pruneArchivedChecks();
     },
   };
 }
-
