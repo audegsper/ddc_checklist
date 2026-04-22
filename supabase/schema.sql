@@ -28,12 +28,14 @@ create table if not exists public.app_settings (
   history_limit integer not null default 10 check (history_limit > 0),
   timezone text not null default 'Asia/Seoul',
   show_employee_name boolean not null default true,
+  admin_password text not null default '8883',
   updated_at timestamptz not null default now()
 );
 
 alter table public.app_settings add column if not exists history_limit integer not null default 10;
 alter table public.app_settings add column if not exists timezone text not null default 'Asia/Seoul';
 alter table public.app_settings add column if not exists show_employee_name boolean not null default true;
+alter table public.app_settings add column if not exists admin_password text not null default '8883';
 alter table public.app_settings add column if not exists updated_at timestamptz not null default now();
 
 create table if not exists public.current_checks (
@@ -54,7 +56,7 @@ create table if not exists public.archived_checks (
   id uuid primary key default gen_random_uuid(),
   archive_date date not null,
   checklist_type text not null check (checklist_type in ('open', 'close')),
-  space_id uuid references public.spaces(id) on delete set null,
+  space_id uuid references public.spaces(id) on delete cascade,
   space_name text not null,
   checked boolean not null default false,
   comment text not null default '',
@@ -66,12 +68,13 @@ create table if not exists public.archived_checks (
 
 drop table if exists public.activity_logs;
 
-insert into public.app_settings (history_limit, timezone, show_employee_name)
-select 10, 'Asia/Seoul', true
+insert into public.app_settings (history_limit, timezone, show_employee_name, admin_password)
+select 10, 'Asia/Seoul', true, '8883'
 where not exists (select 1 from public.app_settings);
 
 update public.app_settings
 set show_employee_name = coalesce(show_employee_name, true),
+    admin_password = coalesce(admin_password, '8883'),
     updated_at = coalesce(updated_at, now());
 
 update public.spaces
@@ -99,6 +102,13 @@ for insert
 to anon, authenticated
 with check (true);
 
+drop policy if exists "public delete employees" on public.employees;
+create policy "public delete employees"
+on public.employees
+for delete
+to anon, authenticated
+using (true);
+
 drop policy if exists "public read spaces" on public.spaces;
 create policy "public read spaces"
 on public.spaces
@@ -120,6 +130,13 @@ for update
 to anon, authenticated
 using (true)
 with check (true);
+
+drop policy if exists "public delete spaces" on public.spaces;
+create policy "public delete spaces"
+on public.spaces
+for delete
+to anon, authenticated
+using (true);
 
 drop policy if exists "public read settings" on public.app_settings;
 create policy "public read settings"

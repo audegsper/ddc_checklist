@@ -25,7 +25,10 @@
             <h1 id="app-title">병원 체크리스트</h1>
             <p id="today-label" class="hero__date"></p>
           </div>
-          <div id="sync-pill" class="sync-pill">데모 모드</div>
+          <div class="hero__meta">
+            <div id="version-pill" class="version-pill">버전 0.0.0</div>
+            <div id="sync-pill" class="sync-pill">데모 모드</div>
+          </div>
         </div>
 
         <div class="hero__segment" role="tablist" aria-label="체크리스트 종류">
@@ -45,7 +48,6 @@
       <main class="layout">
         <nav class="tabs" aria-label="앱 섹션">
           <button class="tab is-active" data-tab="checklist">체크</button>
-          <button class="tab" data-tab="manage">관리</button>
           <button class="tab" data-tab="history">기록</button>
           <button class="tab" data-tab="setup">설정</button>
         </nav>
@@ -71,38 +73,11 @@
           <div id="spaces-list" class="space-list"></div>
         </section>
 
-        <section class="panel" data-panel="manage">
-          <div class="section-title">
-            <div>
-              <h2>기본 정보 관리</h2>
-              <p>직원, 공간, 오픈/마감 체크 항목, 공간 순서를 관리합니다.</p>
-            </div>
-          </div>
-
-          <div class="card stack">
-            <h3>직원 추가</h3>
-            <form id="employee-form" class="inline-form">
-              <input id="employee-name" type="text" placeholder="예: 김도현" maxlength="30" required />
-              <button type="submit">직원 추가</button>
-            </form>
-            <div id="employee-list" class="chip-row"></div>
-          </div>
-
-          <div class="card stack">
-            <h3>공간 추가</h3>
-            <form id="space-form" class="inline-form">
-              <input id="space-name" type="text" placeholder="예: 대기실" maxlength="40" required />
-              <button type="submit">공간 추가</button>
-            </form>
-            <div id="manage-spaces-list" class="stack"></div>
-          </div>
-        </section>
-
         <section class="panel" data-panel="history">
           <div class="section-title">
             <div>
               <h2>기록</h2>
-              <p>하루가 끝날 때 넘긴 최종 결과를 날짜별로 확인합니다.</p>
+              <p id="history-retention-copy">하루가 끝날 때 넘긴 최종 결과를 날짜별로 확인합니다.</p>
             </div>
           </div>
 
@@ -123,39 +98,87 @@
           <div class="section-title">
             <div>
               <h2>설정</h2>
-              <p>직원 표시 방식과 기록 보관 기간을 조정합니다.</p>
+              <p>비밀번호 입력 후 설정과 관리 기능을 사용할 수 있습니다.</p>
             </div>
           </div>
 
-          <div class="card stack">
-            <h3>동작 설정</h3>
-            <form id="settings-form" class="settings-form stack">
-              <label class="field">
-                <span class="field__label">기록 보관 날짜 수</span>
-                <input id="history-limit" type="number" min="1" max="365" step="1" />
-              </label>
-
-              <label class="toggle-field">
-                <input id="show-employee-toggle" type="checkbox" />
-                <span>공간 점검 시 직원 이름 선택 및 표시 사용</span>
-              </label>
-
-              <button type="submit">설정 저장</button>
+          <div id="setup-lock-card" class="card stack">
+            <h3>설정 잠금 해제</h3>
+            <form id="setup-auth-form" class="inline-form">
+              <input id="setup-password" type="password" placeholder="비밀번호 입력" maxlength="40" required />
+              <button type="submit">들어가기</button>
             </form>
-            <p class="helper-text">
-              직원 표시를 끄면 체크 화면에서 직원 선택 영역이 숨겨지고 기록에도 이름을 표시하지 않습니다.
-            </p>
+            <p id="setup-auth-help" class="helper-text">초기 비밀번호는 8883입니다.</p>
           </div>
 
-          <div class="card stack">
-            <h3>Supabase 연결 가이드</h3>
-            <ol class="steps">
-              <li>`supabase/schema.sql`을 SQL Editor에서 실행합니다.</li>
-              <li>`site/app-config.js`에 `supabaseUrl`, `supabaseAnonKey`를 입력합니다.</li>
-              <li>`useSupabase`를 `true`로 바꾸고 페이지를 새로고침합니다.</li>
-              <li>`site/app-config.js`에 실제 값이 있고 `useSupabase`가 `true`면 keepalive 워크플로가 같은 설정을 읽어 호출합니다.</li>
-            </ol>
-            <div id="setup-status" class="status-box"></div>
+          <div id="setup-content" class="stack is-hidden">
+            <div class="card stack">
+              <div class="card__title-row">
+                <h3>동작 설정</h3>
+                <button id="setup-lock-button" class="secondary-button" type="button">잠그기</button>
+              </div>
+              <form id="settings-form" class="settings-form stack">
+                <label class="field">
+                  <span class="field__label">기록 보관 날짜 수</span>
+                  <input id="history-limit" type="number" min="1" max="365" step="1" />
+                </label>
+
+                <label class="toggle-field">
+                  <input id="show-employee-toggle" type="checkbox" />
+                  <span>공간 점검 시 직원 이름 선택 및 표시 사용</span>
+                </label>
+
+                <button type="submit">설정 저장</button>
+              </form>
+              <p class="helper-text">
+                직원 표시를 끄면 체크 화면에서 직원 선택 영역이 숨겨지고 기록에도 이름을 표시하지 않습니다.
+              </p>
+            </div>
+
+            <div class="card stack">
+              <h3>비밀번호 변경</h3>
+              <form id="password-form" class="stack">
+                <label class="field">
+                  <span class="field__label">현재 비밀번호</span>
+                  <input id="current-password" type="password" maxlength="40" required />
+                </label>
+                <label class="field">
+                  <span class="field__label">새 비밀번호</span>
+                  <input id="new-password" type="password" maxlength="40" required />
+                </label>
+                <button type="submit">비밀번호 변경</button>
+              </form>
+            </div>
+
+            <div class="card stack">
+              <h3>직원 관리</h3>
+              <form id="employee-form" class="inline-form">
+                <input id="employee-name" type="text" placeholder="예: 김도현" maxlength="30" required />
+                <button type="submit">직원 추가</button>
+              </form>
+              <div id="employee-list" class="chip-row"></div>
+            </div>
+
+            <div class="card stack">
+              <h3>공간 관리</h3>
+              <form id="space-form" class="inline-form">
+                <input id="space-name" type="text" placeholder="예: 대기실" maxlength="40" required />
+                <button type="submit">공간 추가</button>
+              </form>
+              <p class="helper-text">화살표 또는 드래그로 공간 순서를 바꿀 수 있습니다.</p>
+              <div id="manage-spaces-list" class="stack"></div>
+            </div>
+
+            <div class="card stack">
+              <h3>Supabase 연결 가이드</h3>
+              <ol class="steps">
+                <li>`supabase/schema.sql`을 SQL Editor에서 실행합니다.</li>
+                <li>`site/app-config.js`에 `supabaseUrl`, `supabaseAnonKey`를 입력합니다.</li>
+                <li>`useSupabase`를 `true`로 바꾸고 페이지를 새로고침합니다.</li>
+                <li>`site/app-config.js`에 실제 값이 있고 `useSupabase`가 `true`면 keepalive 워크플로가 같은 설정을 읽어 호출합니다.</li>
+              </ol>
+              <div id="setup-status" class="status-box"></div>
+            </div>
           </div>
         </section>
       </main>

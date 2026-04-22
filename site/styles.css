@@ -11,10 +11,11 @@
   --primary-soft: #d8efe7;
   --warning-soft: #fff1d8;
   --warning-text: #8e5a0d;
+  --danger-soft: #ffe0de;
+  --danger-text: #9b2f2f;
   --shadow: 0 18px 50px rgba(32, 52, 46, 0.12);
   --radius-xl: 28px;
   --radius-lg: 20px;
-  --radius-md: 14px;
 }
 
 * {
@@ -76,7 +77,8 @@ button {
 
 .hero__eyebrow,
 .space-card__eyebrow,
-.surface__label {
+.surface__label,
+.manage-space-card__summary {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -85,13 +87,18 @@ button {
 }
 
 .hero__topline,
+.hero__meta,
 .space-card__header,
 .space-card__actions,
 .inline-form,
 .history-item__top,
 .calendar-nav,
 .checklist-summary,
-.history-toolbar {
+.history-toolbar,
+.card__title-row,
+.manage-space-card__row,
+.manage-space-card__summary-row,
+.manage-space-card__order {
   display: flex;
   gap: 12px;
   align-items: center;
@@ -138,16 +145,25 @@ button {
   box-shadow: 0 10px 24px rgba(21, 111, 92, 0.12);
 }
 
-.sync-pill {
+.sync-pill,
+.version-pill {
   position: relative;
   z-index: 1;
   padding: 10px 14px;
   border-radius: 999px;
-  background: var(--primary-soft);
-  color: var(--primary-strong);
   font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.sync-pill {
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+}
+
+.version-pill {
+  background: rgba(28, 42, 37, 0.08);
+  color: var(--text);
 }
 
 .hero__card,
@@ -155,7 +171,8 @@ button {
 .summary-card,
 .space-card,
 .status-box,
-.calendar-day {
+.calendar-day,
+.manage-space-card {
   background: var(--panel);
   backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.75);
@@ -170,8 +187,9 @@ button {
   border-radius: var(--radius-lg);
 }
 
-.hero__card.is-hidden {
-  display: none;
+.hero__card.is-hidden,
+.is-hidden {
+  display: none !important;
 }
 
 .layout {
@@ -180,7 +198,7 @@ button {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   padding: 8px;
   border-radius: 20px;
@@ -218,7 +236,8 @@ button {
 
 .space-card,
 .card,
-.summary-card {
+.summary-card,
+.manage-space-card {
   padding: 18px;
   border-radius: var(--radius-xl);
 }
@@ -263,20 +282,24 @@ textarea:focus {
 
 button,
 .chip,
-.calendar-day {
+.calendar-day,
+.manage-space-card {
   transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
 button:hover,
 .chip:hover,
-.calendar-day:hover {
+.calendar-day:hover,
+.manage-space-card:hover {
   transform: translateY(-1px);
 }
 
 .ghost-button,
 .secondary-button,
 .inline-form button,
-.settings-form button {
+.settings-form button,
+#password-form button,
+#setup-auth-form button {
   padding: 12px 16px;
   border-radius: 14px;
   font-weight: 700;
@@ -284,7 +307,9 @@ button:hover,
 
 .ghost-button,
 .inline-form button,
-.settings-form button {
+.settings-form button,
+#password-form button,
+#setup-auth-form button {
   background: linear-gradient(180deg, var(--primary), var(--primary-strong));
   color: white;
   box-shadow: 0 10px 18px rgba(21, 111, 92, 0.18);
@@ -298,6 +323,12 @@ button:hover,
 .secondary-button.is-subtle {
   background: rgba(28, 42, 37, 0.06);
   color: var(--muted);
+}
+
+.secondary-button.is-danger,
+.chip.is-danger {
+  background: var(--danger-soft);
+  color: var(--danger-text);
 }
 
 .ghost-button.is-complete {
@@ -317,12 +348,28 @@ button:hover,
 .summary-badge {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   padding: 8px 12px;
   border-radius: 999px;
   border: 1px solid rgba(21, 111, 92, 0.12);
   background: rgba(216, 239, 231, 0.62);
   color: var(--primary-strong);
   font-size: 13px;
+  font-weight: 700;
+}
+
+.chip--removable {
+  gap: 8px;
+  padding-right: 8px;
+}
+
+.chip__remove {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 999px;
+  background: rgba(28, 42, 37, 0.08);
+  color: var(--text);
   font-weight: 700;
 }
 
@@ -333,35 +380,14 @@ button:hover,
   border-color: rgba(142, 90, 13, 0.14);
 }
 
-.manage-space-card {
-  padding: 16px;
-  border-radius: 22px;
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.72);
-  display: grid;
-  gap: 12px;
-}
-
-.manage-space-card__top,
-.manage-space-card__order {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.manage-space-card__top h4,
-.history-item h4 {
-  margin: 0;
-}
-
 .space-card__details {
   margin-top: 14px;
   border-top: 1px solid rgba(28, 42, 37, 0.08);
   padding-top: 12px;
 }
 
-.space-card__details summary {
+.space-card__details summary,
+.manage-space-card details summary {
   list-style: none;
   display: flex;
   align-items: center;
@@ -371,11 +397,13 @@ button:hover,
   font-weight: 700;
 }
 
-.space-card__details summary::-webkit-details-marker {
+.space-card__details summary::-webkit-details-marker,
+.manage-space-card details summary::-webkit-details-marker {
   display: none;
 }
 
-.space-card__details-body {
+.space-card__details-body,
+.manage-space-card__details-body {
   display: grid;
   gap: 14px;
   margin-top: 14px;
@@ -404,6 +432,26 @@ button:hover,
 .toggle-field input {
   width: 20px;
   height: 20px;
+}
+
+.manage-space-card {
+  cursor: grab;
+}
+
+.manage-space-card.is-dragging {
+  opacity: 0.55;
+  transform: scale(0.98);
+}
+
+.icon-button {
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0 10px;
+  border-radius: 14px;
+  background: rgba(21, 111, 92, 0.08);
+  color: var(--primary-strong);
+  font-size: 18px;
+  font-weight: 700;
 }
 
 .calendar-grid {
@@ -504,13 +552,16 @@ button:hover,
   }
 
   .hero__topline,
+  .hero__meta,
   .space-card__header,
   .space-card__actions,
   .inline-form,
   .checklist-summary,
   .history-toolbar,
   .calendar-nav,
-  .manage-space-card__top,
+  .card__title-row,
+  .manage-space-card__row,
+  .manage-space-card__summary-row,
   .manage-space-card__order {
     flex-direction: column;
     align-items: stretch;

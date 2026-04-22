@@ -11,6 +11,7 @@ function normalizeBootstrap(data) {
     history_limit: 10,
     timezone: "Asia/Seoul",
     show_employee_name: true,
+    admin_password: "8883",
   };
 
   return {
@@ -49,17 +50,50 @@ export async function createSupabaseRepository(config) {
     }
   }
 
+  async function reindexSpaces() {
+    const { data: spaces, error } = await client
+      .from("spaces")
+      .select("id, sort_order")
+      .eq("is_active", true)
+      .order("sort_order");
+    if (error) throw error;
+
+    for (const [index, space] of (spaces ?? []).entries()) {
+      const nextOrder = index + 1;
+      if (Number(space.sort_order) !== nextOrder) {
+        const { error: updateError } = await client
+          .from("spaces")
+          .update({ sort_order: nextOrder })
+          .eq("id", space.id);
+        if (updateError) throw updateError;
+      }
+    }
+  }
+
   return {
     async getBootstrap() {
       const workDate = getWorkDate(timezone);
-      const [{ data: employees, error: employeeError }, { data: spaces, error: spaceError }, { data: currentChecks, error: currentError }, { data: archivedChecks, error: archivedError }, { data: settings, error: settingsError }] =
-        await Promise.all([
-          client.from("employees").select("*").eq("is_active", true).order("created_at"),
-          client.from("spaces").select("*").eq("is_active", true).order("sort_order"),
-          client.from("current_checks").select("*").eq("work_date", workDate).order("updated_at", { ascending: false }),
-          client.from("archived_checks").select("*").order("archive_date", { ascending: false }).order("sort_order"),
-          client.from("app_settings").select("*").limit(1),
-        ]);
+      const [
+        { data: employees, error: employeeError },
+        { data: spaces, error: spaceError },
+        { data: currentChecks, error: currentError },
+        { data: archivedChecks, error: archivedError },
+        { data: settings, error: settingsError },
+      ] = await Promise.all([
+        client.from("employees").select("*").eq("is_active", true).order("created_at"),
+        client.from("spaces").select("*").eq("is_active", true).order("sort_order"),
+        client
+          .from("current_checks")
+          .select("*")
+          .eq("work_date", workDate)
+          .order("updated_at", { ascending: false }),
+        client
+          .from("archived_checks")
+          .select("*")
+          .order("archive_date", { ascending: false })
+          .order("sort_order"),
+        client.from("app_settings").select("*").limit(1),
+      ]);
 
       if (employeeError) throw employeeError;
       if (spaceError) throw spaceError;
@@ -86,10 +120,16 @@ export async function createSupabaseRepository(config) {
       return data;
     },
 
+    async deleteEmployee(employeeId) {
+      const { error } = await client.from("employees").delete().eq("id", employeeId);
+      if (error) throw error;
+    },
+
     async addSpace(name) {
       const { data: lastSpace, error: lastSpaceError } = await client
         .from("spaces")
         .select("sort_order")
+        .eq("is_active", true)
         .order("sort_order", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -110,6 +150,12 @@ export async function createSupabaseRepository(config) {
       return data;
     },
 
+    async deleteSpace(spaceId) {
+      const { error } = await client.from("spaces").delete().eq("id", spaceId);
+      if (error) throw error;
+      await reindexSpaces();
+    },
+
     async updateSpace(spaceId, patch) {
       const { error } = await client.from("spaces").update(patch).eq("id", spaceId);
       if (error) throw error;
@@ -123,12 +169,13 @@ export async function createSupabaseRepository(config) {
         .order("sort_order");
       if (spacesError) throw spacesError;
 
-      const index = (spaces ?? []).findIndex((space) => space.id === spaceId);
+      const list = spaces ?? [];
+      const index = list.findIndex((space) => space.id === spaceId);
       const swapIndex = direction === "up" ? index - 1 : index + 1;
-      if (index < 0 || swapIndex < 0 || swapIndex >= spaces.length) return;
+      if (index < 0 || swapIndex < 0 || swapIndex >= list.length) return;
 
-      const current = spaces[index];
-      const target = spaces[swapIndex];
+      const current = list[index];
+      const target = list[swapIndex];
 
       const { error: updateCurrentError } = await client
         .from("spaces")
@@ -141,6 +188,16 @@ export async function createSupabaseRepository(config) {
         .update({ sort_order: current.sort_order })
         .eq("id", target.id);
       if (updateTargetError) throw updateTargetError;
+    },
+
+    async saveSpaceOrder(spaceIds) {
+      for (const [index, spaceId] of spaceIds.entries()) {
+        const { error } = await client
+          .from("spaces")
+          .update({ sort_order: index + 1 })
+          .eq("id", spaceId);
+        if (error) throw error;
+      }
     },
 
     async updateSettings(patch) {
@@ -156,6 +213,7 @@ export async function createSupabaseRepository(config) {
           history_limit: Number(patch.history_limit ?? 10),
           timezone,
           show_employee_name: Boolean(patch.show_employee_name ?? true),
+          admin_password: patch.admin_password ?? "8883",
         });
         if (error) throw error;
       } else {
@@ -164,6 +222,35 @@ export async function createSupabaseRepository(config) {
       }
 
       await pruneArchivedChecks();
+    },
+
+    async verifyPassword(password) {
+      const { data, error } = await client
+        .from("app_settings")
+        .select("admin_password")
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return (data?.admin_password ?? "8883") === password;
+    },
+
+    async changePassword(currentPassword, nextPassword) {
+      const { data, error } = await client
+        .from("app_settings")
+        .select("id, admin_password")
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+
+      if ((data?.admin_password ?? "8883") !== currentPassword) {
+        throw new Error("현재 비밀번호가 일치하지 않습니다.");
+      }
+
+      const { error: updateError } = await client
+        .from("app_settings")
+        .update({ admin_password: nextPassword, updated_at: new Date().toISOString() })
+        .eq("id", data.id);
+      if (updateError) throw updateError;
     },
 
     async saveCurrentCheck(payload) {
@@ -225,7 +312,11 @@ export async function createSupabaseRepository(config) {
       const [{ data: spaces, error: spacesError }, { data: currentChecks, error: currentError }] =
         await Promise.all([
           client.from("spaces").select("*").eq("is_active", true).order("sort_order"),
-          client.from("current_checks").select("*").eq("work_date", targetDate).eq("checklist_type", checklistType),
+          client
+            .from("current_checks")
+            .select("*")
+            .eq("work_date", targetDate)
+            .eq("checklist_type", checklistType),
         ]);
       if (spacesError) throw spacesError;
       if (currentError) throw currentError;

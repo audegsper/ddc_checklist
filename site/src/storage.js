@@ -1,6 +1,6 @@
 import { createId, getWorkDate } from "./utils.js";
 
-const STORAGE_KEY = "ddc-checklist-state-v2";
+const STORAGE_KEY = "ddc-checklist-state-v3";
 
 const nowIso = () => new Date().toISOString();
 
@@ -36,6 +36,7 @@ const demoState = {
     history_limit: 10,
     timezone: "Asia/Seoul",
     show_employee_name: true,
+    admin_password: "8883",
     updated_at: nowIso(),
   },
 };
@@ -69,7 +70,16 @@ function pruneArchivedChecks(state) {
 }
 
 function sortSpaces(spaces) {
-  return [...spaces].sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
+  return [...spaces]
+    .filter((space) => space.is_active !== false)
+    .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
+}
+
+function reindexSpaces(state) {
+  state.spaces = sortSpaces(state.spaces).map((space, index) => ({
+    ...space,
+    sort_order: index + 1,
+  }));
 }
 
 function upsertCurrentCheck(state, payload) {
@@ -106,7 +116,7 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
     async getBootstrap() {
       const state = readState();
       pruneArchivedChecks(state);
-      state.spaces = sortSpaces(state.spaces);
+      reindexSpaces(state);
       writeState(state);
       return structuredClone(state);
     },
@@ -124,6 +134,18 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
       return employee;
     },
 
+    async deleteEmployee(employeeId) {
+      const state = readState();
+      state.employees = state.employees.filter((employee) => employee.id !== employeeId);
+      state.current_checks = state.current_checks.map((item) =>
+        item.employee_id === employeeId ? { ...item, employee_id: null, employee_name: "" } : item,
+      );
+      state.archived_checks = state.archived_checks.map((item) =>
+        item.employee_id === employeeId ? { ...item, employee_id: null, employee_name: "" } : item,
+      );
+      writeState(state);
+    },
+
     async addSpace(name) {
       const state = readState();
       const space = {
@@ -132,18 +154,28 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
         open_checklist_template: "",
         close_checklist_template: "",
         is_active: true,
-        sort_order: state.spaces.length + 1,
+        sort_order: sortSpaces(state.spaces).length + 1,
         created_at: nowIso(),
       };
       state.spaces.push(space);
+      reindexSpaces(state);
       writeState(state);
       return space;
+    },
+
+    async deleteSpace(spaceId) {
+      const state = readState();
+      state.spaces = state.spaces.filter((space) => space.id !== spaceId);
+      state.current_checks = state.current_checks.filter((item) => item.space_id !== spaceId);
+      state.archived_checks = state.archived_checks.filter((item) => item.space_id !== spaceId);
+      reindexSpaces(state);
+      writeState(state);
     },
 
     async updateSpace(spaceId, patch) {
       const state = readState();
       state.spaces = state.spaces.map((space) => (space.id === spaceId ? { ...space, ...patch } : space));
-      state.spaces = sortSpaces(state.spaces);
+      reindexSpaces(state);
       writeState(state);
     },
 
@@ -153,13 +185,20 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
       const index = spaces.findIndex((space) => space.id === spaceId);
       const swapIndex = direction === "up" ? index - 1 : index + 1;
       if (index < 0 || swapIndex < 0 || swapIndex >= spaces.length) return;
+      [spaces[index], spaces[swapIndex]] = [spaces[swapIndex], spaces[index]];
+      state.spaces = spaces;
+      reindexSpaces(state);
+      writeState(state);
+    },
 
-      const current = spaces[index];
-      const target = spaces[swapIndex];
-      const currentOrder = current.sort_order;
-      current.sort_order = target.sort_order;
-      target.sort_order = currentOrder;
-      state.spaces = sortSpaces(spaces);
+    async saveSpaceOrder(spaceIds) {
+      const state = readState();
+      const map = new Map(state.spaces.map((space) => [space.id, space]));
+      state.spaces = spaceIds
+        .map((id) => map.get(id))
+        .filter(Boolean)
+        .map((space, index) => ({ ...space, sort_order: index + 1 }));
+      reindexSpaces(state);
       writeState(state);
     },
 
@@ -171,6 +210,21 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
         updated_at: nowIso(),
       };
       pruneArchivedChecks(state);
+      writeState(state);
+    },
+
+    async verifyPassword(password) {
+      const state = readState();
+      return state.app_settings.admin_password === password;
+    },
+
+    async changePassword(currentPassword, nextPassword) {
+      const state = readState();
+      if (state.app_settings.admin_password !== currentPassword) {
+        throw new Error("현재 비밀번호가 일치하지 않습니다.");
+      }
+      state.app_settings.admin_password = nextPassword;
+      state.app_settings.updated_at = nowIso();
       writeState(state);
     },
 
