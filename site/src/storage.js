@@ -1,6 +1,6 @@
 import { createId, getWorkDate } from "./utils.js";
 
-const STORAGE_KEY = "ddc-checklist-state-v3";
+const STORAGE_KEY = "ddc-checklist-state-v4";
 
 const nowIso = () => new Date().toISOString();
 
@@ -36,7 +36,9 @@ const demoState = {
     history_limit: 10,
     timezone: "Asia/Seoul",
     show_employee_name: true,
-    admin_password: "1234",
+    admin_password: "8883",
+    last_open_archive_date: null,
+    last_close_archive_date: null,
     updated_at: nowIso(),
   },
 };
@@ -49,7 +51,12 @@ function readState() {
   }
 
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    parsed.app_settings = {
+      ...demoState.app_settings,
+      ...parsed.app_settings,
+    };
+    return parsed;
   } catch {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(demoState));
     return structuredClone(demoState);
@@ -82,6 +89,19 @@ function reindexSpaces(state) {
   }));
 }
 
+function toDateKey(date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getYesterdayKey(now = new Date()) {
+  const date = new Date(now);
+  date.setDate(now.getDate() - 1);
+  return toDateKey(date);
+}
+
 function upsertCurrentCheck(state, payload) {
   const index = state.current_checks.findIndex(
     (item) =>
@@ -101,21 +121,74 @@ function upsertCurrentCheck(state, payload) {
     comment: payload.comment ?? current?.comment ?? "",
     employee_id: payload.employee_id ?? current?.employee_id ?? null,
     employee_name: payload.employee_name ?? current?.employee_name ?? "",
+    comment_employee_id: payload.comment_employee_id ?? current?.comment_employee_id ?? null,
+    comment_employee_name: payload.comment_employee_name ?? current?.comment_employee_name ?? "",
     updated_at: nowIso(),
   };
 
-  if (index >= 0) {
-    state.current_checks[index] = next;
-  } else {
-    state.current_checks.push(next);
+  if (index >= 0) state.current_checks[index] = next;
+  else state.current_checks.push(next);
+}
+
+function finalizeChecklistForDate(state, checklistType, targetDate) {
+  const currentMap = new Map(
+    state.current_checks
+      .filter((item) => item.work_date === targetDate && item.checklist_type === checklistType)
+      .map((item) => [item.space_id, item]),
+  );
+
+  state.archived_checks = state.archived_checks.filter(
+    (item) => !(item.archive_date === targetDate && item.checklist_type === checklistType),
+  );
+
+  sortSpaces(state.spaces).forEach((space) => {
+    const current = currentMap.get(space.id);
+    state.archived_checks.push({
+      id: createId("archive"),
+      archive_date: targetDate,
+      checklist_type: checklistType,
+      space_id: space.id,
+      space_name: space.name,
+      checked: Boolean(current?.checked),
+      comment: current?.comment ?? "",
+      employee_id: current?.employee_id ?? null,
+      employee_name: current?.employee_name ?? "",
+      comment_employee_id: current?.comment_employee_id ?? null,
+      comment_employee_name: current?.comment_employee_name ?? "",
+      sort_order: space.sort_order,
+      archived_at: nowIso(),
+    });
+  });
+
+  state.current_checks = state.current_checks.filter(
+    (item) => !(item.work_date === targetDate && item.checklist_type === checklistType),
+  );
+}
+
+function autoArchiveIfNeeded(state, timezone = "Asia/Seoul") {
+  const now = new Date();
+  const today = getWorkDate(timezone);
+  const hour = now.getHours();
+
+  if (hour >= 15 && state.app_settings.last_open_archive_date !== today) {
+    finalizeChecklistForDate(state, "open", today);
+    state.app_settings.last_open_archive_date = today;
   }
+
+  const yesterday = getYesterdayKey(now);
+  if (state.app_settings.last_close_archive_date !== yesterday) {
+    finalizeChecklistForDate(state, "close", yesterday);
+    state.app_settings.last_close_archive_date = yesterday;
+  }
+
+  pruneArchivedChecks(state);
 }
 
 export function createLocalRepository(timezone = "Asia/Seoul") {
   return {
     async getBootstrap() {
       const state = readState();
-      pruneArchivedChecks(state);
+      autoArchiveIfNeeded(state, timezone);
       reindexSpaces(state);
       writeState(state);
       return structuredClone(state);
@@ -123,32 +196,51 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
 
     async addEmployee(name) {
       const state = readState();
-      const employee = {
+      state.employees.push({
         id: createId("emp"),
         name,
         is_active: true,
         created_at: nowIso(),
-      };
-      state.employees.push(employee);
+      });
       writeState(state);
-      return employee;
+      return state.employees[state.employees.length - 1];
     },
 
     async deleteEmployee(employeeId) {
       const state = readState();
       state.employees = state.employees.filter((employee) => employee.id !== employeeId);
       state.current_checks = state.current_checks.map((item) =>
-        item.employee_id === employeeId ? { ...item, employee_id: null, employee_name: "" } : item,
+        item.employee_id === employeeId || item.comment_employee_id === employeeId
+          ? {
+              ...item,
+              employee_id: item.employee_id === employeeId ? null : item.employee_id,
+              employee_name: item.employee_id === employeeId ? "" : item.employee_name,
+              comment_employee_id:
+                item.comment_employee_id === employeeId ? null : item.comment_employee_id,
+              comment_employee_name:
+                item.comment_employee_id === employeeId ? "" : item.comment_employee_name,
+            }
+          : item,
       );
       state.archived_checks = state.archived_checks.map((item) =>
-        item.employee_id === employeeId ? { ...item, employee_id: null, employee_name: "" } : item,
+        item.employee_id === employeeId || item.comment_employee_id === employeeId
+          ? {
+              ...item,
+              employee_id: item.employee_id === employeeId ? null : item.employee_id,
+              employee_name: item.employee_id === employeeId ? "" : item.employee_name,
+              comment_employee_id:
+                item.comment_employee_id === employeeId ? null : item.comment_employee_id,
+              comment_employee_name:
+                item.comment_employee_id === employeeId ? "" : item.comment_employee_name,
+            }
+          : item,
       );
       writeState(state);
     },
 
     async addSpace(name) {
       const state = readState();
-      const space = {
+      state.spaces.push({
         id: createId("space"),
         name,
         open_checklist_template: "",
@@ -156,11 +248,10 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
         is_active: true,
         sort_order: sortSpaces(state.spaces).length + 1,
         created_at: nowIso(),
-      };
-      state.spaces.push(space);
+      });
       reindexSpaces(state);
       writeState(state);
-      return space;
+      return state.spaces[state.spaces.length - 1];
     },
 
     async deleteSpace(spaceId) {
@@ -245,45 +336,9 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
         space_id: spaceId,
         space_name: state.spaces.find((item) => item.id === spaceId)?.name ?? "",
         comment: "",
+        comment_employee_id: null,
+        comment_employee_name: "",
       });
-      writeState(state);
-    },
-
-    async finalizeChecklist({ checklistType, workDate }) {
-      const state = readState();
-      const targetDate = workDate ?? getWorkDate(timezone);
-      const currentMap = new Map(
-        state.current_checks
-          .filter((item) => item.work_date === targetDate && item.checklist_type === checklistType)
-          .map((item) => [item.space_id, item]),
-      );
-
-      state.archived_checks = state.archived_checks.filter(
-        (item) => !(item.archive_date === targetDate && item.checklist_type === checklistType),
-      );
-
-      sortSpaces(state.spaces).forEach((space) => {
-        const current = currentMap.get(space.id);
-        state.archived_checks.push({
-          id: createId("archive"),
-          archive_date: targetDate,
-          checklist_type: checklistType,
-          space_id: space.id,
-          space_name: space.name,
-          checked: Boolean(current?.checked),
-          comment: current?.comment ?? "",
-          employee_id: current?.employee_id ?? null,
-          employee_name: current?.employee_name ?? "",
-          sort_order: space.sort_order,
-          archived_at: nowIso(),
-        });
-      });
-
-      state.current_checks = state.current_checks.filter(
-        (item) => !(item.work_date === targetDate && item.checklist_type === checklistType),
-      );
-
-      pruneArchivedChecks(state);
       writeState(state);
     },
   };

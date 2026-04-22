@@ -28,14 +28,18 @@ create table if not exists public.app_settings (
   history_limit integer not null default 10 check (history_limit > 0),
   timezone text not null default 'Asia/Seoul',
   show_employee_name boolean not null default true,
-  admin_password text not null default '1234',
+  admin_password text not null default '8883',
+  last_open_archive_date date,
+  last_close_archive_date date,
   updated_at timestamptz not null default now()
 );
 
 alter table public.app_settings add column if not exists history_limit integer not null default 10;
 alter table public.app_settings add column if not exists timezone text not null default 'Asia/Seoul';
 alter table public.app_settings add column if not exists show_employee_name boolean not null default true;
-alter table public.app_settings add column if not exists admin_password text not null default '1234';
+alter table public.app_settings add column if not exists admin_password text not null default '8883';
+alter table public.app_settings add column if not exists last_open_archive_date date;
+alter table public.app_settings add column if not exists last_close_archive_date date;
 alter table public.app_settings add column if not exists updated_at timestamptz not null default now();
 
 create table if not exists public.current_checks (
@@ -48,9 +52,14 @@ create table if not exists public.current_checks (
   comment text not null default '',
   employee_id uuid references public.employees(id) on delete set null,
   employee_name text not null default '',
+  comment_employee_id uuid references public.employees(id) on delete set null,
+  comment_employee_name text not null default '',
   updated_at timestamptz not null default now(),
   unique (work_date, checklist_type, space_id)
 );
+
+alter table public.current_checks add column if not exists comment_employee_id uuid references public.employees(id) on delete set null;
+alter table public.current_checks add column if not exists comment_employee_name text not null default '';
 
 create table if not exists public.archived_checks (
   id uuid primary key default gen_random_uuid(),
@@ -62,19 +71,24 @@ create table if not exists public.archived_checks (
   comment text not null default '',
   employee_id uuid references public.employees(id) on delete set null,
   employee_name text not null default '',
+  comment_employee_id uuid references public.employees(id) on delete set null,
+  comment_employee_name text not null default '',
   sort_order integer not null default 1,
   archived_at timestamptz not null default now()
 );
 
+alter table public.archived_checks add column if not exists comment_employee_id uuid references public.employees(id) on delete set null;
+alter table public.archived_checks add column if not exists comment_employee_name text not null default '';
+
 drop table if exists public.activity_logs;
 
 insert into public.app_settings (history_limit, timezone, show_employee_name, admin_password)
-select 10, 'Asia/Seoul', true, '1234'
+select 10, 'Asia/Seoul', true, '8883'
 where not exists (select 1 from public.app_settings);
 
 update public.app_settings
 set show_employee_name = coalesce(show_employee_name, true),
-    admin_password = coalesce(admin_password, '1234'),
+    admin_password = coalesce(admin_password, '8883'),
     updated_at = coalesce(updated_at, now());
 
 update public.spaces

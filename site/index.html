@@ -31,9 +31,21 @@
           </div>
         </div>
 
-        <div class="hero__segment" role="tablist" aria-label="체크리스트 종류">
-          <button class="hero-tab is-active" data-checklist-type="open">오픈 체크리스트</button>
-          <button class="hero-tab" data-checklist-type="close">마감 체크리스트</button>
+        <div class="hero__overview">
+          <button id="open-overview" class="overview-card" type="button">
+            <div class="overview-card__label">오픈 체크리스트</div>
+            <div class="overview-card__stats">
+              <strong id="open-overview-count">확인 0 · 미확인 0</strong>
+              <span id="open-overview-time" class="helper-text">오후 3시까지 집중</span>
+            </div>
+          </button>
+          <button id="close-overview" class="overview-card" type="button">
+            <div class="overview-card__label">마감 체크리스트</div>
+            <div class="overview-card__stats">
+              <strong id="close-overview-count">확인 0 · 미확인 0</strong>
+              <span id="close-overview-time" class="helper-text">오후 3시 이후 집중</span>
+            </div>
+          </button>
         </div>
 
         <div id="employee-card" class="hero__card">
@@ -63,11 +75,14 @@
           </div>
 
           <div class="summary-card checklist-summary">
-            <div>
-              <strong id="summary-count">0 / 0 공간 확인 완료</strong>
-              <p id="summary-caption" class="helper-text">최종 결과를 기록으로 넘기기 전까지 현재 상태를 유지합니다.</p>
+            <div class="checklist-switch" role="tablist" aria-label="체크 종류">
+              <button class="hero-tab is-active" data-checklist-type="open">오픈 체크리스트</button>
+              <button class="hero-tab" data-checklist-type="close">마감 체크리스트</button>
             </div>
-            <button id="finalize-button" class="ghost-button">오늘 결과 기록으로 넘기기</button>
+            <div class="checklist-summary__meta">
+              <strong id="summary-count">0 / 0 공간 확인 완료</strong>
+              <p id="summary-caption" class="helper-text">미확인 공간이 위에 표시되고, 확인된 공간은 아래로 정렬됩니다.</p>
+            </div>
           </div>
 
           <div id="spaces-list" class="space-list"></div>
@@ -77,7 +92,7 @@
           <div class="section-title">
             <div>
               <h2>기록</h2>
-              <p id="history-retention-copy">하루가 끝날 때 넘긴 최종 결과를 날짜별로 확인합니다.</p>
+              <p id="history-retention-copy">오후 3시와 자정 자동 기록 결과를 날짜별로 확인합니다.</p>
             </div>
           </div>
 
@@ -108,7 +123,7 @@
               <input id="setup-password" type="password" placeholder="비밀번호 입력" maxlength="40" required />
               <button type="submit">들어가기</button>
             </form>
-            <p id="setup-auth-help" class="helper-text">초기 비밀번호는 1234입니다.</p>
+            <p id="setup-auth-help" class="helper-text">초기 비밀번호는 8883입니다.</p>
           </div>
 
           <div id="setup-content" class="stack is-hidden">
@@ -125,14 +140,11 @@
 
                 <label class="toggle-field">
                   <input id="show-employee-toggle" type="checkbox" />
-                  <span>공간 점검 시 직원 이름 선택 및 표시 사용</span>
+                  <span>체크 화면에서 직원 이름 표시</span>
                 </label>
 
                 <button type="submit">설정 저장</button>
               </form>
-              <p class="helper-text">
-                직원 표시를 끄면 체크 화면에서 직원 선택 영역이 숨겨지고 기록에도 이름을 표시하지 않습니다.
-              </p>
             </div>
 
             <div class="card stack">
@@ -187,14 +199,11 @@
     <template id="space-card-template">
       <article class="space-card">
         <div class="space-card__header">
-          <div>
-            <p class="space-card__eyebrow">점검 공간</p>
-            <h3 class="space-card__name"></h3>
-          </div>
+          <h3 class="space-card__name"></h3>
           <button class="ghost-button space-card__confirm" data-action="toggle-check">확인</button>
         </div>
 
-        <div class="space-card__status-row">
+        <div class="space-card__inline-meta">
           <span class="status-pill" data-role="check-state">미확인</span>
           <span class="status-pill" data-role="comment-state">메모 없음</span>
           <span class="helper-text" data-role="owner-state"></span>

@@ -11,7 +11,9 @@ function normalizeBootstrap(data) {
     history_limit: 10,
     timezone: "Asia/Seoul",
     show_employee_name: true,
-    admin_password: "1234",
+    admin_password: "8883",
+    last_open_archive_date: null,
+    last_close_archive_date: null,
   };
 
   return {
@@ -21,6 +23,15 @@ function normalizeBootstrap(data) {
     archived_checks: data.archived_checks ?? [],
     app_settings: settings,
   };
+}
+
+function getYesterdayKey(now = new Date()) {
+  const date = new Date(now);
+  date.setDate(now.getDate() - 1);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 export async function createSupabaseRepository(config) {
@@ -70,8 +81,95 @@ export async function createSupabaseRepository(config) {
     }
   }
 
+  async function finalizeChecklistForDate(checklistType, targetDate) {
+    const [{ data: spaces, error: spacesError }, { data: currentChecks, error: currentError }] =
+      await Promise.all([
+        client.from("spaces").select("*").eq("is_active", true).order("sort_order"),
+        client
+          .from("current_checks")
+          .select("*")
+          .eq("work_date", targetDate)
+          .eq("checklist_type", checklistType),
+      ]);
+    if (spacesError) throw spacesError;
+    if (currentError) throw currentError;
+
+    const { error: deleteExistingArchiveError } = await client
+      .from("archived_checks")
+      .delete()
+      .eq("archive_date", targetDate)
+      .eq("checklist_type", checklistType);
+    if (deleteExistingArchiveError) throw deleteExistingArchiveError;
+
+    const currentMap = new Map((currentChecks ?? []).map((item) => [item.space_id, item]));
+    const archivePayload = (spaces ?? []).map((space) => {
+      const current = currentMap.get(space.id);
+      return {
+        archive_date: targetDate,
+        checklist_type: checklistType,
+        space_id: space.id,
+        space_name: space.name,
+        checked: Boolean(current?.checked),
+        comment: current?.comment ?? "",
+        employee_id: current?.employee_id ?? null,
+        employee_name: current?.employee_name ?? "",
+        comment_employee_id: current?.comment_employee_id ?? null,
+        comment_employee_name: current?.comment_employee_name ?? "",
+        sort_order: space.sort_order,
+      };
+    });
+
+    if (archivePayload.length) {
+      const { error: insertArchiveError } = await client.from("archived_checks").insert(archivePayload);
+      if (insertArchiveError) throw insertArchiveError;
+    }
+
+    const { error: deleteCurrentError } = await client
+      .from("current_checks")
+      .delete()
+      .eq("work_date", targetDate)
+      .eq("checklist_type", checklistType);
+    if (deleteCurrentError) throw deleteCurrentError;
+  }
+
+  async function autoArchiveIfNeeded() {
+    const now = new Date();
+    const today = getWorkDate(timezone);
+    const yesterday = getYesterdayKey(now);
+    const hour = now.getHours();
+
+    const { data: settings, error: settingsError } = await client
+      .from("app_settings")
+      .select("*")
+      .limit(1)
+      .maybeSingle();
+    if (settingsError) throw settingsError;
+    if (!settings) return;
+
+    if (hour >= 15 && settings.last_open_archive_date !== today) {
+      await finalizeChecklistForDate("open", today);
+      const { error } = await client
+        .from("app_settings")
+        .update({ last_open_archive_date: today, updated_at: new Date().toISOString() })
+        .eq("id", settings.id);
+      if (error) throw error;
+    }
+
+    if (settings.last_close_archive_date !== yesterday) {
+      await finalizeChecklistForDate("close", yesterday);
+      const { error } = await client
+        .from("app_settings")
+        .update({ last_close_archive_date: yesterday, updated_at: new Date().toISOString() })
+        .eq("id", settings.id);
+      if (error) throw error;
+    }
+
+    await pruneArchivedChecks();
+  }
+
   return {
     async getBootstrap() {
+      await autoArchiveIfNeeded();
       const workDate = getWorkDate(timezone);
       const [
         { data: employees, error: employeeError },
@@ -213,7 +311,9 @@ export async function createSupabaseRepository(config) {
           history_limit: Number(patch.history_limit ?? 10),
           timezone,
           show_employee_name: Boolean(patch.show_employee_name ?? true),
-          admin_password: patch.admin_password ?? "1234",
+          admin_password: patch.admin_password ?? "8883",
+          last_open_archive_date: null,
+          last_close_archive_date: null,
         });
         if (error) throw error;
       } else {
@@ -231,7 +331,7 @@ export async function createSupabaseRepository(config) {
         .limit(1)
         .maybeSingle();
       if (error) throw error;
-      return (data?.admin_password ?? "1234") === password;
+      return (data?.admin_password ?? "8883") === password;
     },
 
     async changePassword(currentPassword, nextPassword) {
@@ -242,7 +342,7 @@ export async function createSupabaseRepository(config) {
         .maybeSingle();
       if (error) throw error;
 
-      if ((data?.admin_password ?? "1234") !== currentPassword) {
+      if ((data?.admin_password ?? "8883") !== currentPassword) {
         throw new Error("현재 비밀번호가 일치하지 않습니다.");
       }
 
@@ -274,6 +374,9 @@ export async function createSupabaseRepository(config) {
         comment: payload.comment ?? existing?.comment ?? "",
         employee_id: payload.employee_id ?? existing?.employee_id ?? null,
         employee_name: payload.employee_name ?? existing?.employee_name ?? "",
+        comment_employee_id: payload.comment_employee_id ?? existing?.comment_employee_id ?? null,
+        comment_employee_name:
+          payload.comment_employee_name ?? existing?.comment_employee_name ?? "",
         updated_at: new Date().toISOString(),
       };
 
@@ -301,63 +404,15 @@ export async function createSupabaseRepository(config) {
       if (existing) {
         const { error } = await client
           .from("current_checks")
-          .update({ comment: "", updated_at: new Date().toISOString() })
+          .update({
+            comment: "",
+            comment_employee_id: null,
+            comment_employee_name: "",
+            updated_at: new Date().toISOString(),
+          })
           .eq("id", existing.id);
         if (error) throw error;
       }
-    },
-
-    async finalizeChecklist({ checklistType, workDate }) {
-      const targetDate = workDate ?? getWorkDate(timezone);
-      const [{ data: spaces, error: spacesError }, { data: currentChecks, error: currentError }] =
-        await Promise.all([
-          client.from("spaces").select("*").eq("is_active", true).order("sort_order"),
-          client
-            .from("current_checks")
-            .select("*")
-            .eq("work_date", targetDate)
-            .eq("checklist_type", checklistType),
-        ]);
-      if (spacesError) throw spacesError;
-      if (currentError) throw currentError;
-
-      const currentMap = new Map((currentChecks ?? []).map((item) => [item.space_id, item]));
-
-      const { error: deleteExistingArchiveError } = await client
-        .from("archived_checks")
-        .delete()
-        .eq("archive_date", targetDate)
-        .eq("checklist_type", checklistType);
-      if (deleteExistingArchiveError) throw deleteExistingArchiveError;
-
-      const archivePayload = (spaces ?? []).map((space) => {
-        const current = currentMap.get(space.id);
-        return {
-          archive_date: targetDate,
-          checklist_type: checklistType,
-          space_id: space.id,
-          space_name: space.name,
-          checked: Boolean(current?.checked),
-          comment: current?.comment ?? "",
-          employee_id: current?.employee_id ?? null,
-          employee_name: current?.employee_name ?? "",
-          sort_order: space.sort_order,
-        };
-      });
-
-      if (archivePayload.length) {
-        const { error: insertArchiveError } = await client.from("archived_checks").insert(archivePayload);
-        if (insertArchiveError) throw insertArchiveError;
-      }
-
-      const { error: deleteCurrentError } = await client
-        .from("current_checks")
-        .delete()
-        .eq("work_date", targetDate)
-        .eq("checklist_type", checklistType);
-      if (deleteCurrentError) throw deleteCurrentError;
-
-      await pruneArchivedChecks();
     },
   };
 }

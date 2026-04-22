@@ -76,7 +76,6 @@ button {
 }
 
 .hero__eyebrow,
-.space-card__eyebrow,
 .surface__label,
 .manage-space-card__summary {
   font-size: 12px;
@@ -98,7 +97,8 @@ button {
 .card__title-row,
 .manage-space-card__row,
 .manage-space-card__summary-row,
-.manage-space-card__order {
+.manage-space-card__order,
+.space-card__inline-meta {
   display: flex;
   gap: 12px;
   align-items: center;
@@ -122,33 +122,51 @@ button {
   color: var(--muted);
 }
 
-.hero__segment {
+.hero__overview {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
+  gap: 12px;
   margin-top: 18px;
 }
 
-.hero-tab,
-.tab {
-  padding: 12px 10px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.54);
-  color: var(--muted);
+.overview-card,
+.hero__card,
+.card,
+.summary-card,
+.space-card,
+.status-box,
+.calendar-day,
+.manage-space-card {
+  background: var(--panel);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: var(--shadow);
+}
+
+.overview-card {
+  padding: 16px;
+  border-radius: 22px;
+  text-align: left;
+}
+
+.overview-card.is-active {
+  border-color: rgba(21, 111, 92, 0.26);
+  background: linear-gradient(180deg, rgba(216, 239, 231, 0.86), rgba(255, 255, 255, 0.96));
+}
+
+.overview-card__label {
+  font-size: 14px;
   font-weight: 700;
 }
 
-.hero-tab.is-active,
-.tab.is-active {
-  background: var(--panel-strong);
-  color: var(--primary);
-  box-shadow: 0 10px 24px rgba(21, 111, 92, 0.12);
+.overview-card__stats {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
 }
 
 .sync-pill,
 .version-pill {
-  position: relative;
-  z-index: 1;
   padding: 10px 14px;
   border-radius: 999px;
   font-size: 13px;
@@ -166,28 +184,12 @@ button {
   color: var(--text);
 }
 
-.hero__card,
-.card,
-.summary-card,
-.space-card,
-.status-box,
-.calendar-day,
-.manage-space-card {
-  background: var(--panel);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.75);
-  box-shadow: var(--shadow);
-}
-
 .hero__card {
-  position: relative;
-  z-index: 1;
   margin-top: 18px;
   padding: 18px;
   border-radius: var(--radius-lg);
 }
 
-.hero__card.is-hidden,
 .is-hidden {
   display: none !important;
 }
@@ -205,6 +207,22 @@ button {
   background: rgba(255, 255, 255, 0.6);
   backdrop-filter: blur(18px);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.tab,
+.hero-tab {
+  padding: 12px 10px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.54);
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.tab.is-active,
+.hero-tab.is-active {
+  background: var(--panel-strong);
+  color: var(--primary);
+  box-shadow: 0 10px 24px rgba(21, 111, 92, 0.12);
 }
 
 .panel {
@@ -243,13 +261,29 @@ button {
 }
 
 .space-card.is-checked {
-  border-color: rgba(21, 111, 92, 0.24);
+  opacity: 0.96;
 }
 
 .space-card.has-comment {
   background:
     linear-gradient(180deg, rgba(255, 248, 236, 0.82), rgba(255, 255, 255, 0.92)),
     var(--panel);
+}
+
+.checklist-summary {
+  display: grid;
+  gap: 14px;
+}
+
+.checklist-summary__meta {
+  display: grid;
+  gap: 6px;
+}
+
+.checklist-switch {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
 }
 
 .field {
@@ -283,14 +317,16 @@ textarea:focus {
 button,
 .chip,
 .calendar-day,
-.manage-space-card {
+.manage-space-card,
+.overview-card {
   transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
 button:hover,
 .chip:hover,
 .calendar-day:hover,
-.manage-space-card:hover {
+.manage-space-card:hover,
+.overview-card:hover {
   transform: translateY(-1px);
 }
 
@@ -325,8 +361,7 @@ button:hover,
   color: var(--muted);
 }
 
-.secondary-button.is-danger,
-.chip.is-danger {
+.secondary-button.is-danger {
   background: var(--danger-soft);
   color: var(--danger-text);
 }
@@ -336,7 +371,6 @@ button:hover,
 }
 
 .chip-row,
-.space-card__status-row,
 .space-card__summary-badges {
   display: flex;
   flex-wrap: wrap;
@@ -380,8 +414,14 @@ button:hover,
   border-color: rgba(142, 90, 13, 0.14);
 }
 
+.space-card__inline-meta {
+  margin-top: 10px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
 .space-card__details {
-  margin-top: 14px;
+  margin-top: 12px;
   border-top: 1px solid rgba(28, 42, 37, 0.08);
   padding-top: 12px;
 }
@@ -556,7 +596,6 @@ button:hover,
   .space-card__header,
   .space-card__actions,
   .inline-form,
-  .checklist-summary,
   .history-toolbar,
   .calendar-nav,
   .card__title-row,
@@ -565,6 +604,11 @@ button:hover,
   .manage-space-card__order {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .hero__overview,
+  .checklist-switch {
+    grid-template-columns: 1fr;
   }
 
   .tabs {
