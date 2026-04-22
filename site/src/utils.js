@@ -53,6 +53,21 @@ export function getHourInTimeZone(timezone = "Asia/Seoul", date = new Date()) {
   );
 }
 
+export function getTimePartsInTimeZone(timezone = "Asia/Seoul", date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const pick = (type) => Number(parts.find((part) => part.type === type)?.value ?? "0");
+  return {
+    hour: pick("hour"),
+    minute: pick("minute"),
+  };
+}
+
 export function createId(prefix = "id") {
   const value = Math.random().toString(36).slice(2, 10);
   return `${prefix}_${Date.now()}_${value}`;

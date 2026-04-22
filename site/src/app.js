@@ -7,19 +7,32 @@ import {
   formatKoreanDate,
   formatKoreanDateTime,
   formatYearMonth,
-  getHourInTimeZone,
+  getTimePartsInTimeZone,
   getWorkDate,
 } from "./utils.js";
 
-const APP_VERSION = "버전 0.9.2";
+const APP_VERSION = "버전 1.0.0";
 const APP_DISPLAY_NAME = "DD 체크리스트";
 const config = window.__APP_CONFIG__ ?? {};
 const APP_TIMEZONE = config.timezone || "Asia/Seoul";
+const OPEN_ALERT_STORAGE_KEY = "ddc-checklist-open-alert-date";
+const CHECKLIST_TYPES = [
+  { id: "open", label: "오픈", templateKey: "open_checklist_template" },
+  { id: "always", label: "상시", templateKey: "always_checklist_template" },
+  { id: "close", label: "마감", templateKey: "close_checklist_template" },
+];
+
+function getChecklistTypeByTime(date = new Date()) {
+  const { hour } = getTimePartsInTimeZone(APP_TIMEZONE, date);
+  if (hour < 13) return "open";
+  if (hour < 18) return "always";
+  return "close";
+}
 
 const state = {
   bootstrap: null,
   selectedEmployeeId: "",
-  selectedChecklistType: getHourInTimeZone(APP_TIMEZONE) < 15 ? "open" : "close",
+  selectedChecklistType: getChecklistTypeByTime(),
   selectedDate: getWorkDate(APP_TIMEZONE),
   calendarMonth: new Date(),
   repository: null,
@@ -31,6 +44,7 @@ const state = {
   commentDrafts: {},
   openDetails: {},
   manageOpenDetails: {},
+  openAlertTimer: null,
   hasBootstrapped: false,
 };
 
@@ -76,8 +90,10 @@ function initializeElements() {
     summaryCount: document.getElementById("summary-count"),
     summaryCaption: document.getElementById("summary-caption"),
     openOverview: document.getElementById("open-overview"),
+    alwaysOverview: document.getElementById("always-overview"),
     closeOverview: document.getElementById("close-overview"),
     openOverviewCount: document.getElementById("open-overview-count"),
+    alwaysOverviewCount: document.getElementById("always-overview-count"),
     closeOverviewCount: document.getElementById("close-overview-count"),
     setupLockCard: document.getElementById("setup-lock-card"),
     setupContent: document.getElementById("setup-content"),
@@ -144,12 +160,13 @@ function getSettings() {
       timezone: APP_TIMEZONE,
       show_employee_name: true,
       admin_password: "8883",
+      last_daily_archive_date: null,
     }
   );
 }
 
 function currentFocusType() {
-  return getHourInTimeZone(APP_TIMEZONE) < 15 ? "open" : "close";
+  return getChecklistTypeByTime();
 }
 
 async function createRepository() {
@@ -195,11 +212,15 @@ function getArchivedComments(archiveDate, checklistType, spaceId) {
 }
 
 function getChecklistLabel(type = state.selectedChecklistType) {
-  return type === "open" ? "오픈" : "마감";
+  return CHECKLIST_TYPES.find((item) => item.id === type)?.label ?? "오픈";
+}
+
+function getChecklistConfig(type = state.selectedChecklistType) {
+  return CHECKLIST_TYPES.find((item) => item.id === type) ?? CHECKLIST_TYPES[0];
 }
 
 function getChecklistTemplate(space, type = state.selectedChecklistType) {
-  return type === "open" ? space.open_checklist_template : space.close_checklist_template;
+  return space?.[getChecklistConfig(type).templateKey] ?? "";
 }
 
 function getChecklistItems(space, type = state.selectedChecklistType) {
@@ -247,16 +268,16 @@ function clearCommentDraft(spaceId, checklistType = state.selectedChecklistType)
   delete state.commentDrafts[getCommentDraftKey(spaceId, checklistType)];
 }
 
-function getDetailsKey(spaceId, checklistType = state.selectedChecklistType) {
-  return `${checklistType}:${spaceId}`;
+function getOpenDetailsType(spaceId) {
+  return state.openDetails[spaceId] ?? "";
 }
 
-function isDetailsOpen(spaceId, checklistType = state.selectedChecklistType) {
-  return Boolean(state.openDetails[getDetailsKey(spaceId, checklistType)]);
-}
-
-function setDetailsOpen(spaceId, open, checklistType = state.selectedChecklistType) {
-  state.openDetails[getDetailsKey(spaceId, checklistType)] = open;
+function setOpenDetailsType(spaceId, checklistType = "") {
+  if (checklistType) {
+    state.openDetails[spaceId] = checklistType;
+    return;
+  }
+  delete state.openDetails[spaceId];
 }
 
 function isManageDetailsOpen(spaceId) {
@@ -267,18 +288,19 @@ function setManageDetailsOpen(spaceId, open) {
   state.manageOpenDetails[spaceId] = open;
 }
 
-function buildChecklistPrompt(space, isChecked) {
+function buildChecklistPrompt(space, checklistType, isChecked) {
+  const checklistLabel = getChecklistLabel(checklistType);
   if (isChecked) {
-    return `${space.name} 공간의 확인 완료를 해제할까요?\n\n해제하면 다시 '체크가 필요한 곳'으로 이동합니다.`;
+    return `${space.name} 공간의 ${checklistLabel} 확인 완료를 해제할까요?\n\n해제하면 다시 '체크가 필요한 곳'으로 이동합니다.`;
   }
 
-  const items = getChecklistItems(space, state.selectedChecklistType);
+  const items = getChecklistItems(space, checklistType);
   const itemLines = items.length
     ? items.map((item, index) => `${index + 1}. ${item}`).join("\n")
     : "등록된 체크 항목이 없습니다.";
 
   return [
-    `${space.name} 공간의 체크 항목입니다.`,
+    `${space.name} 공간의 ${checklistLabel} 체크 항목입니다.`,
     "",
     itemLines,
     "",
@@ -290,15 +312,6 @@ function buildOwnerText(currentCheck) {
   if (!getSettings().show_employee_name) return "";
   if (!currentCheck?.employee_name) return "";
   return `확인 직원: ${currentCheck.employee_name}`;
-}
-
-function syncDetailsButton(button, detailsOpen, hasComments) {
-  if (!button) return;
-  setText(button, detailsOpen ? "-" : "+");
-  button.setAttribute("aria-label", detailsOpen ? "세부보기 닫기" : "세부보기 열기");
-  button.setAttribute("aria-expanded", detailsOpen ? "true" : "false");
-  toggleClass(button, "is-open", detailsOpen);
-  toggleClass(button, "has-note", hasComments);
 }
 
 function renderChecklistItemsMarkup(space, checklistType = state.selectedChecklistType) {
@@ -423,6 +436,7 @@ async function refresh() {
   renderSettings();
   renderSetupAccess();
   activatePanel(state.activePanel);
+  startOpenAlertWatcher();
   state.hasBootstrapped = true;
   setLoading(false);
 }
@@ -443,14 +457,18 @@ function renderHeader() {
 function renderOverview() {
   const focus = currentFocusType();
   const openStats = countChecklistStatus("open");
+  const alwaysStats = countChecklistStatus("always");
   const closeStats = countChecklistStatus("close");
 
   setText(elements.openOverviewCount, `확인 ${openStats.checked} · 미확인 ${openStats.unchecked}`);
+  setText(elements.alwaysOverviewCount, `확인 ${alwaysStats.checked} · 미확인 ${alwaysStats.unchecked}`);
   setText(elements.closeOverviewCount, `확인 ${closeStats.checked} · 미확인 ${closeStats.unchecked}`);
 
   toggleClass(elements.openOverview, "is-hidden", focus !== "open");
+  toggleClass(elements.alwaysOverview, "is-hidden", focus !== "always");
   toggleClass(elements.closeOverview, "is-hidden", focus !== "close");
   toggleClass(elements.openOverview, "is-active", focus === "open");
+  toggleClass(elements.alwaysOverview, "is-active", focus === "always");
   toggleClass(elements.closeOverview, "is-active", focus === "close");
 }
 
@@ -503,112 +521,180 @@ function renderEmployees() {
 
 function renderChecklistSummary() {
   const spaces = state.bootstrap?.spaces ?? [];
-  const checkedCount = spaces.filter((space) => getCurrentCheck(space.id)?.checked).length;
+  const checkedCount = spaces.filter((space) => getCurrentCheck(space.id, state.selectedChecklistType)?.checked).length;
   const uncheckedCount = Math.max(spaces.length - checkedCount, 0);
 
   setText(elements.summaryCount, `체크가 필요한 곳 ${uncheckedCount} · 체크를 완료한 곳 ${checkedCount}`);
   setText(elements.summaryCaption, "");
 }
 
+function buildDetailsBadges(space, checklistType, comments) {
+  const badges = [];
+  if (getChecklistItems(space, checklistType).length) {
+    badges.push('<span class="summary-badge">체크항목 있음</span>');
+  }
+  if (comments.length) {
+    badges.push('<span class="summary-badge is-warning">메모 있음</span>');
+  }
+  return badges.join("");
+}
+
 function buildSpaceCard(space) {
-  const currentCheck = getCurrentCheck(space.id);
-  const comments = getCurrentComments(space.id);
-  const draft = getCommentDraft(space.id);
   const fragment = elements.template.content.cloneNode(true);
   const card = fragment.querySelector(".space-card");
   const name = fragment.querySelector(".space-card__name");
-  const confirmButton = fragment.querySelector('[data-action="toggle-check"]');
-  const detailsToggleButton = fragment.querySelector('[data-action="toggle-details"]');
+  const typeControls = fragment.querySelector('[data-role="type-controls"]');
   const ownerState = fragment.querySelector('[data-role="owner-state"]');
-  const details = fragment.querySelector(".space-card__details");
+  const detailsPanel = fragment.querySelector('[data-role="details-panel"]');
+  const detailsTitle = fragment.querySelector('[data-role="details-title"]');
   const checklistItems = fragment.querySelector('[data-role="checklist-items"]');
+  const summaryBadges = fragment.querySelector('[data-role="summary-badges"]');
   const commentInput = fragment.querySelector(".space-card__comment");
   const saveCommentButton = fragment.querySelector('[data-action="save-comment"]');
   const cancelCommentButton = fragment.querySelector('[data-action="cancel-comment"]');
   const commentList = fragment.querySelector('[data-role="comment-list"]');
-  const isChecked = Boolean(currentCheck?.checked);
+  const currentCheck = getCurrentCheck(space.id, state.selectedChecklistType);
+  const visibleDetailsType = getOpenDetailsType(space.id);
+  const checklistType = visibleDetailsType || state.selectedChecklistType;
+  const comments = getCurrentComments(space.id, checklistType);
+  const draft = getCommentDraft(space.id, checklistType);
   const ownerText = buildOwnerText(currentCheck);
+  const isPanelOpen = Boolean(visibleDetailsType);
 
   card.dataset.spaceId = space.id;
-  toggleClass(card, "is-checked", isChecked);
+  toggleClass(card, "is-checked", Boolean(currentCheck?.checked));
 
   setText(name, space.name);
-  setText(confirmButton, isChecked ? "완료" : "확인");
-  toggleClass(confirmButton, "is-complete", isChecked);
-
   setText(ownerState, ownerText);
   toggleClass(ownerState, "is-hidden", !ownerText);
 
-  setHtml(checklistItems, renderChecklistItemsMarkup(space));
-  setHtml(commentList, renderCurrentCommentsMarkup(comments));
-  commentInput.value = draft.text ?? "";
-  setText(saveCommentButton, draft.editingCommentId ? "수정 저장" : "메모 저장");
-  toggleClass(cancelCommentButton, "is-hidden", !draft.editingCommentId);
+  setHtml(
+    typeControls,
+    CHECKLIST_TYPES.map((type) => {
+      const typeCheck = getCurrentCheck(space.id, type.id);
+      const typeComments = getCurrentComments(space.id, type.id);
+      const isActive = visibleDetailsType === type.id;
 
-  details.open = isDetailsOpen(space.id);
-  syncDetailsButton(detailsToggleButton, details.open, comments.length > 0);
-  details.addEventListener("toggle", () => {
-    setDetailsOpen(space.id, details.open);
-    syncDetailsButton(detailsToggleButton, details.open, comments.length > 0);
-  });
+      return `
+        <div class="space-card__type-control ${isActive ? "is-active" : ""}">
+          <button
+            class="space-card__type-button ${isActive ? "is-active" : ""} ${typeComments.length ? "has-note" : ""}"
+            data-action="toggle-detail-type"
+            data-checklist-type="${type.id}"
+            type="button"
+          >
+            ${type.label}
+          </button>
+          <label class="space-card__checkbox ${typeCheck?.checked ? "is-checked" : ""}">
+            <input
+              class="space-card__checkbox-input"
+              data-action="toggle-check"
+              data-checklist-type="${type.id}"
+              type="checkbox"
+              ${typeCheck?.checked ? "checked" : ""}
+            />
+            <span class="space-card__checkbox-ui" aria-hidden="true"></span>
+          </label>
+        </div>
+      `;
+    }).join(""),
+  );
 
-  detailsToggleButton.addEventListener("click", () => {
-    const nextOpen = !details.open;
-    details.open = nextOpen;
-    setDetailsOpen(space.id, nextOpen);
-    syncDetailsButton(detailsToggleButton, nextOpen, comments.length > 0);
-  });
+  toggleClass(detailsPanel, "is-hidden", !isPanelOpen);
+
+  if (isPanelOpen) {
+    setText(detailsTitle, `${getChecklistLabel(checklistType)} 세부내용`);
+    setHtml(checklistItems, renderChecklistItemsMarkup(space, checklistType));
+    setHtml(summaryBadges, buildDetailsBadges(space, checklistType, comments));
+    setHtml(commentList, renderCurrentCommentsMarkup(comments));
+    commentInput.value = draft.text ?? "";
+    commentInput.placeholder = `${getChecklistLabel(checklistType)} 메모를 입력해 주세요.`;
+    setText(saveCommentButton, draft.editingCommentId ? "수정 저장" : "메모 저장");
+    toggleClass(cancelCommentButton, "is-hidden", !draft.editingCommentId);
+  } else {
+    setText(detailsTitle, "");
+    setHtml(checklistItems, "");
+    setHtml(summaryBadges, "");
+    setHtml(commentList, "");
+    commentInput.value = "";
+    toggleClass(cancelCommentButton, "is-hidden", true);
+  }
 
   commentInput.addEventListener("input", (event) => {
-    setCommentDraft(space.id, { text: event.target.value });
+    setCommentDraft(space.id, { text: event.target.value }, checklistType);
   });
 
-  confirmButton.addEventListener("click", async () => {
-    try {
-      if (!isChecked && !getSelectedEmployee()) {
-        window.alert("담당 직원을 먼저 선택해 주세요.");
-        return;
-      }
+  Array.from(typeControls.querySelectorAll('[data-action="toggle-detail-type"]')).forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextType = button.dataset.checklistType ?? "open";
+      state.selectedChecklistType = nextType;
+      setOpenDetailsType(space.id, visibleDetailsType === nextType ? "" : nextType);
+      renderOverview();
+      renderChecklistTabs();
+      renderChecklistSummary();
+      renderSpaces();
+    });
+  });
 
-      const confirmed = window.confirm(buildChecklistPrompt(space, isChecked));
-      if (!confirmed) return;
+  Array.from(typeControls.querySelectorAll('[data-action="toggle-check"]')).forEach((input) => {
+    input.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
 
-      confirmButton.disabled = true;
-      if (isChecked) {
-        await state.repository.saveCurrentCheck({
-          checklist_type: state.selectedChecklistType,
-          space_id: space.id,
-          space_name: space.name,
-          checked: false,
-          employee_id: null,
-          employee_name: "",
-        });
-      } else {
-        const employee = getSelectedEmployee();
-        await state.repository.saveCurrentCheck({
-          checklist_type: state.selectedChecklistType,
-          space_id: space.id,
-          space_name: space.name,
-          checked: true,
-          employee_id: employee.id,
-          employee_name: employee.name,
-        });
+    input.addEventListener("change", async () => {
+      const checklistTypeToUpdate = input.dataset.checklistType ?? "open";
+      const alreadyChecked = Boolean(getCurrentCheck(space.id, checklistTypeToUpdate)?.checked);
+
+      try {
+        state.selectedChecklistType = checklistTypeToUpdate;
+
+        if (!alreadyChecked && !getSelectedEmployee()) {
+          window.alert("담당 직원을 먼저 선택해 주세요.");
+          renderSpaces();
+          return;
+        }
+
+        const confirmed = window.confirm(buildChecklistPrompt(space, checklistTypeToUpdate, alreadyChecked));
+        if (!confirmed) {
+          renderSpaces();
+          return;
+        }
+
+        if (alreadyChecked) {
+          await state.repository.saveCurrentCheck({
+            checklist_type: checklistTypeToUpdate,
+            space_id: space.id,
+            space_name: space.name,
+            checked: false,
+            employee_id: null,
+            employee_name: "",
+          });
+        } else {
+          const employee = getSelectedEmployee();
+          await state.repository.saveCurrentCheck({
+            checklist_type: checklistTypeToUpdate,
+            space_id: space.id,
+            space_name: space.name,
+            checked: true,
+            employee_id: employee.id,
+            employee_name: employee.name,
+          });
+        }
+        await refresh();
+      } catch (error) {
+        if (isMissingSupabaseTable(error)) {
+          showSchemaHelp(error);
+          return;
+        }
+        window.alert(`확인 상태 저장에 실패했습니다.\n${getErrorMessage(error)}`);
+        renderSpaces();
       }
-      await refresh();
-    } catch (error) {
-      if (isMissingSupabaseTable(error)) {
-        showSchemaHelp(error);
-        return;
-      }
-      window.alert(`확인 상태 저장에 실패했습니다.\n${getErrorMessage(error)}`);
-    } finally {
-      confirmButton.disabled = false;
-    }
+    });
   });
 
   saveCommentButton.addEventListener("click", async () => {
     try {
-      const draftState = getCommentDraft(space.id);
+      const draftState = getCommentDraft(space.id, checklistType);
       const content = draftState.text.trim();
       if (!content) {
         window.alert("메모 내용을 입력해 주세요.");
@@ -629,7 +715,7 @@ function buildSpaceCard(space) {
         });
       } else {
         await state.repository.addCurrentComment({
-          checklist_type: state.selectedChecklistType,
+          checklist_type: checklistType,
           space_id: space.id,
           space_name: space.name,
           employee_id: employee.id,
@@ -637,8 +723,8 @@ function buildSpaceCard(space) {
           content,
         });
       }
-      clearCommentDraft(space.id);
-      setDetailsOpen(space.id, true);
+      clearCommentDraft(space.id, checklistType);
+      setOpenDetailsType(space.id, checklistType);
       await refresh();
     } catch (error) {
       if (isMissingSupabaseTable(error)) {
@@ -652,8 +738,8 @@ function buildSpaceCard(space) {
   });
 
   cancelCommentButton.addEventListener("click", () => {
-    clearCommentDraft(space.id);
-    setDetailsOpen(space.id, true);
+    clearCommentDraft(space.id, checklistType);
+    setOpenDetailsType(space.id, checklistType);
     renderSpaces();
   });
 
@@ -665,8 +751,8 @@ function buildSpaceCard(space) {
       setCommentDraft(space.id, {
         text: comment.content,
         editingCommentId: comment.id,
-      });
-      setDetailsOpen(space.id, true);
+      }, checklistType);
+      setOpenDetailsType(space.id, checklistType);
       renderSpaces();
     });
   });
@@ -682,10 +768,10 @@ function buildSpaceCard(space) {
 
       try {
         await state.repository.deleteCurrentComment({ commentId });
-        if (getCommentDraft(space.id).editingCommentId === commentId) {
-          clearCommentDraft(space.id);
+        if (getCommentDraft(space.id, checklistType).editingCommentId === commentId) {
+          clearCommentDraft(space.id, checklistType);
         }
-        setDetailsOpen(space.id, true);
+        setOpenDetailsType(space.id, checklistType);
         await refresh();
       } catch (error) {
         if (isMissingSupabaseTable(error)) {
@@ -732,8 +818,8 @@ function renderSpaces() {
     return;
   }
 
-  const pending = spaces.filter((space) => !getCurrentCheck(space.id)?.checked);
-  const completed = spaces.filter((space) => getCurrentCheck(space.id)?.checked);
+  const pending = spaces.filter((space) => !getCurrentCheck(space.id, state.selectedChecklistType)?.checked);
+  const completed = spaces.filter((space) => getCurrentCheck(space.id, state.selectedChecklistType)?.checked);
 
   elements.spacesList?.append(
     renderSpaceGroup("체크가 필요한 곳", pending, "아직 확인이 필요한 공간이 없습니다."),
@@ -866,12 +952,16 @@ function renderManageSpaces() {
       <details>
         <summary>
           체크 항목 편집
-          <span class="summary-badge">${getChecklistItems(space, "open").length || getChecklistItems(space, "close").length ? "입력됨" : "비어 있음"}</span>
+          <span class="summary-badge">${getChecklistItems(space, "open").length || getChecklistItems(space, "always").length || getChecklistItems(space, "close").length ? "입력됨" : "비어 있음"}</span>
         </summary>
         <div class="manage-space-card__details-body">
           <label class="field">
             <span class="field__label">오픈 체크 항목</span>
             <textarea rows="4" data-role="open-template">${escapeHtml(space.open_checklist_template ?? "")}</textarea>
+          </label>
+          <label class="field">
+            <span class="field__label">상시 체크 항목</span>
+            <textarea rows="4" data-role="always-template">${escapeHtml(space.always_checklist_template ?? "")}</textarea>
           </label>
           <label class="field">
             <span class="field__label">마감 체크 항목</span>
@@ -885,6 +975,7 @@ function renderManageSpaces() {
     `;
 
     const openInput = wrapper.querySelector('[data-role="open-template"]');
+    const alwaysInput = wrapper.querySelector('[data-role="always-template"]');
     const closeInput = wrapper.querySelector('[data-role="close-template"]');
     const saveButton = wrapper.querySelector('[data-role="save-space"]');
     const deleteButton = wrapper.querySelector('[data-role="delete-space"]');
@@ -906,6 +997,7 @@ function renderManageSpaces() {
         saveButton.disabled = true;
         await state.repository.updateSpace(space.id, {
           open_checklist_template: openInput.value.trim(),
+          always_checklist_template: alwaysInput.value.trim(),
           close_checklist_template: closeInput.value.trim(),
         });
         setManageDetailsOpen(space.id, true);
@@ -998,7 +1090,7 @@ function renderHistory() {
   );
   setText(
     elements.historyRetentionCopy,
-    `오후 3시 오픈, 자정 마감 결과가 자동 기록됩니다. 현재 설정은 최근 ${retention}일 보관입니다.`,
+    `오픈, 상시, 마감 결과는 매일 자정에 자동 기록됩니다. 현재 설정은 최근 ${retention}일 보관입니다.`,
   );
 
   setHtml(
@@ -1007,6 +1099,7 @@ function renderHistory() {
       .map((day) => {
         const entries = archiveMap.get(day.key) ?? [];
         const openCount = entries.filter((item) => item.checklist_type === "open").length;
+        const alwaysCount = entries.filter((item) => item.checklist_type === "always").length;
         const closeCount = entries.filter((item) => item.checklist_type === "close").length;
         const classes = [
           "calendar-day",
@@ -1021,6 +1114,7 @@ function renderHistory() {
             <div class="calendar-day__number">${day.day}</div>
             <div class="calendar-day__meta">
               ${openCount ? `<span class="helper-text"><span class="calendar-dot"></span> 오픈 ${openCount}</span>` : ""}
+              ${alwaysCount ? `<span class="helper-text"><span class="calendar-dot is-always"></span> 상시 ${alwaysCount}</span>` : ""}
               ${closeCount ? `<span class="helper-text"><span class="calendar-dot is-close"></span> 마감 ${closeCount}</span>` : ""}
             </div>
           </button>
@@ -1040,12 +1134,14 @@ function renderHistory() {
     (a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0),
   );
   const openEntries = selectedEntries.filter((item) => item.checklist_type === "open");
+  const alwaysEntries = selectedEntries.filter((item) => item.checklist_type === "always");
   const closeEntries = selectedEntries.filter((item) => item.checklist_type === "close");
 
   setHtml(
     elements.historyList,
     [
       buildHistoryGroupMarkup("오픈 기록", openEntries, state.selectedDate, "open"),
+      buildHistoryGroupMarkup("상시 기록", alwaysEntries, state.selectedDate, "always"),
       buildHistoryGroupMarkup("마감 기록", closeEntries, state.selectedDate, "close"),
     ].join(""),
   );
@@ -1066,6 +1162,58 @@ function renderSetupAccess() {
     elements.setupAuthHelp,
     state.setupUnlocked ? "설정이 열려 있습니다." : "비밀번호를 입력하면 설정을 열 수 있습니다.",
   );
+}
+
+async function notifyOpenChecklistIfNeeded() {
+  const today = getWorkDate(APP_TIMEZONE);
+  const { hour, minute } = getTimePartsInTimeZone(APP_TIMEZONE);
+  const unchecked = countChecklistStatus("open").unchecked;
+
+  if (hour < 10 || (hour === 10 && minute < 30) || hour >= 13) return;
+  if (!unchecked) return;
+  if (window.localStorage.getItem(OPEN_ALERT_STORAGE_KEY) === today) return;
+
+  const message = `오픈 체크리스트에 미확인 ${unchecked}곳이 남아 있습니다.`;
+  let alerted = false;
+
+  if ("Notification" in window) {
+    if (window.Notification.permission === "granted") {
+      new window.Notification("DD 체크리스트", { body: message });
+      alerted = true;
+    } else if (window.Notification.permission === "default") {
+      const permission = await window.Notification.requestPermission();
+      if (permission === "granted") {
+        new window.Notification("DD 체크리스트", { body: message });
+        alerted = true;
+      }
+    }
+  }
+
+  if (!alerted && document.visibilityState === "visible") {
+    window.alert(message);
+    alerted = true;
+  }
+
+  if (alerted) {
+    window.localStorage.setItem(OPEN_ALERT_STORAGE_KEY, today);
+  }
+}
+
+function startOpenAlertWatcher() {
+  if (state.openAlertTimer) {
+    window.clearInterval(state.openAlertTimer);
+  }
+
+  state.openAlertTimer = window.setInterval(() => {
+    if (!state.bootstrap) return;
+    notifyOpenChecklistIfNeeded().catch((error) => {
+      console.warn("오픈 체크리스트 알림 처리에 실패했습니다.", error);
+    });
+  }, 60 * 1000);
+
+  notifyOpenChecklistIfNeeded().catch((error) => {
+    console.warn("오픈 체크리스트 알림 처리에 실패했습니다.", error);
+  });
 }
 
 function activatePanel(name) {
@@ -1126,6 +1274,15 @@ function bindTabs() {
 
   elements.openOverview?.addEventListener("click", () => {
     state.selectedChecklistType = "open";
+    activatePanel("checklist");
+    renderOverview();
+    renderChecklistTabs();
+    renderChecklistSummary();
+    renderSpaces();
+  });
+
+  elements.alwaysOverview?.addEventListener("click", () => {
+    state.selectedChecklistType = "always";
     activatePanel("checklist");
     renderOverview();
     renderChecklistTabs();

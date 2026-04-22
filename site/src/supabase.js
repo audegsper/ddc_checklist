@@ -1,4 +1,6 @@
-import { getDateKey, getHourInTimeZone, getWorkDate } from "./utils.js";
+import { getDateKey, getWorkDate } from "./utils.js";
+
+const CHECKLIST_TYPES = ["open", "always", "close"];
 
 async function loadClient() {
   const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
@@ -16,8 +18,7 @@ function normalizeBootstrap(data) {
     timezone: "Asia/Seoul",
     show_employee_name: true,
     admin_password: "8883",
-    last_open_archive_date: null,
-    last_close_archive_date: null,
+    last_daily_archive_date: null,
   };
 
   return {
@@ -218,7 +219,6 @@ export async function createSupabaseRepository(config) {
   async function autoArchiveIfNeeded() {
     const today = getWorkDate(timezone);
     const yesterday = getYesterdayKey(timezone);
-    const hour = getHourInTimeZone(timezone);
 
     const { data: settings, error: settingsError } = await client
       .from("app_settings")
@@ -228,20 +228,39 @@ export async function createSupabaseRepository(config) {
     if (settingsError) throw settingsError;
     if (!settings) return;
 
-    if (hour >= 15 && settings.last_open_archive_date !== today) {
-      await finalizeChecklistForDate("open", today);
+    const [
+      { data: staleCheckDates, error: staleCheckDatesError },
+      { data: staleCommentDates, error: staleCommentDatesError },
+    ] = await Promise.all([
+      client.from("current_checks").select("work_date").lt("work_date", today),
+      client.from("current_comments").select("work_date").lt("work_date", today),
+    ]);
+    if (staleCheckDatesError) throw staleCheckDatesError;
+    if (staleCommentDatesError) throw staleCommentDatesError;
+
+    if (!settings.last_daily_archive_date) {
+      const uniqueStaleDates = [
+        ...new Set([...(staleCheckDates ?? []), ...(staleCommentDates ?? [])].map((item) => item.work_date)),
+      ].sort();
+      for (const workDate of uniqueStaleDates) {
+        for (const checklistType of CHECKLIST_TYPES) {
+          await finalizeChecklistForDate(checklistType, workDate);
+        }
+      }
+
       const { error } = await client
         .from("app_settings")
-        .update({ last_open_archive_date: today, updated_at: new Date().toISOString() })
+        .update({ last_daily_archive_date: yesterday, updated_at: new Date().toISOString() })
         .eq("id", settings.id);
       if (error) throw error;
-    }
+    } else if (settings.last_daily_archive_date !== yesterday) {
+      for (const checklistType of CHECKLIST_TYPES) {
+        await finalizeChecklistForDate(checklistType, yesterday);
+      }
 
-    if (settings.last_close_archive_date !== yesterday) {
-      await finalizeChecklistForDate("close", yesterday);
       const { error } = await client
         .from("app_settings")
-        .update({ last_close_archive_date: yesterday, updated_at: new Date().toISOString() })
+        .update({ last_daily_archive_date: yesterday, updated_at: new Date().toISOString() })
         .eq("id", settings.id);
       if (error) throw error;
     }
@@ -366,6 +385,7 @@ export async function createSupabaseRepository(config) {
         .insert({
           name,
           open_checklist_template: "",
+          always_checklist_template: "",
           close_checklist_template: "",
           is_active: true,
           sort_order: Number(lastSpace?.sort_order ?? 0) + 1,
@@ -441,8 +461,7 @@ export async function createSupabaseRepository(config) {
           timezone,
           show_employee_name: Boolean(patch.show_employee_name ?? true),
           admin_password: patch.admin_password ?? "8883",
-          last_open_archive_date: null,
-          last_close_archive_date: null,
+          last_daily_archive_date: null,
         });
         if (error) throw error;
       } else {

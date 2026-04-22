@@ -16,6 +16,7 @@ create table if not exists public.spaces (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   open_checklist_template text not null default '',
+  always_checklist_template text not null default '',
   close_checklist_template text not null default '',
   is_active boolean not null default true,
   sort_order integer not null default 1,
@@ -23,6 +24,7 @@ create table if not exists public.spaces (
 );
 
 alter table public.spaces add column if not exists open_checklist_template text not null default '';
+alter table public.spaces add column if not exists always_checklist_template text not null default '';
 alter table public.spaces add column if not exists close_checklist_template text not null default '';
 alter table public.spaces add column if not exists is_active boolean not null default true;
 alter table public.spaces add column if not exists sort_order integer not null default 1;
@@ -34,8 +36,7 @@ create table if not exists public.app_settings (
   timezone text not null default 'Asia/Seoul',
   show_employee_name boolean not null default true,
   admin_password text not null default '8883',
-  last_open_archive_date date,
-  last_close_archive_date date,
+  last_daily_archive_date date,
   updated_at timestamptz not null default now()
 );
 
@@ -43,14 +44,13 @@ alter table public.app_settings add column if not exists history_limit integer n
 alter table public.app_settings add column if not exists timezone text not null default 'Asia/Seoul';
 alter table public.app_settings add column if not exists show_employee_name boolean not null default true;
 alter table public.app_settings add column if not exists admin_password text not null default '8883';
-alter table public.app_settings add column if not exists last_open_archive_date date;
-alter table public.app_settings add column if not exists last_close_archive_date date;
+alter table public.app_settings add column if not exists last_daily_archive_date date;
 alter table public.app_settings add column if not exists updated_at timestamptz not null default now();
 
 create table if not exists public.current_checks (
   id uuid primary key default gen_random_uuid(),
   work_date date not null,
-  checklist_type text not null check (checklist_type in ('open', 'close')),
+  checklist_type text not null,
   space_id uuid not null references public.spaces(id) on delete cascade,
   space_name text not null,
   checked boolean not null default false,
@@ -63,6 +63,11 @@ create table if not exists public.current_checks (
   unique (work_date, checklist_type, space_id)
 );
 
+alter table public.current_checks drop constraint if exists current_checks_checklist_type_check;
+alter table public.current_checks
+  add constraint current_checks_checklist_type_check
+  check (checklist_type in ('open', 'always', 'close'));
+
 alter table public.current_checks add column if not exists comment text not null default '';
 alter table public.current_checks add column if not exists employee_id uuid references public.employees(id) on delete set null;
 alter table public.current_checks add column if not exists employee_name text not null default '';
@@ -73,7 +78,7 @@ alter table public.current_checks add column if not exists updated_at timestampt
 create table if not exists public.current_comments (
   id uuid primary key default gen_random_uuid(),
   work_date date not null,
-  checklist_type text not null check (checklist_type in ('open', 'close')),
+  checklist_type text not null,
   space_id uuid not null references public.spaces(id) on delete cascade,
   space_name text not null,
   employee_id uuid references public.employees(id) on delete set null,
@@ -82,6 +87,11 @@ create table if not exists public.current_comments (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.current_comments drop constraint if exists current_comments_checklist_type_check;
+alter table public.current_comments
+  add constraint current_comments_checklist_type_check
+  check (checklist_type in ('open', 'always', 'close'));
 
 alter table public.current_comments add column if not exists employee_id uuid references public.employees(id) on delete set null;
 alter table public.current_comments add column if not exists employee_name text not null default '';
@@ -92,7 +102,7 @@ alter table public.current_comments add column if not exists updated_at timestam
 create table if not exists public.archived_checks (
   id uuid primary key default gen_random_uuid(),
   archive_date date not null,
-  checklist_type text not null check (checklist_type in ('open', 'close')),
+  checklist_type text not null,
   space_id uuid references public.spaces(id) on delete cascade,
   space_name text not null,
   checked boolean not null default false,
@@ -105,6 +115,11 @@ create table if not exists public.archived_checks (
   archived_at timestamptz not null default now()
 );
 
+alter table public.archived_checks drop constraint if exists archived_checks_checklist_type_check;
+alter table public.archived_checks
+  add constraint archived_checks_checklist_type_check
+  check (checklist_type in ('open', 'always', 'close'));
+
 alter table public.archived_checks add column if not exists comment text not null default '';
 alter table public.archived_checks add column if not exists employee_id uuid references public.employees(id) on delete set null;
 alter table public.archived_checks add column if not exists employee_name text not null default '';
@@ -116,7 +131,7 @@ alter table public.archived_checks add column if not exists archived_at timestam
 create table if not exists public.archived_comments (
   id uuid primary key default gen_random_uuid(),
   archive_date date not null,
-  checklist_type text not null check (checklist_type in ('open', 'close')),
+  checklist_type text not null,
   space_id uuid references public.spaces(id) on delete cascade,
   space_name text not null,
   employee_id uuid references public.employees(id) on delete set null,
@@ -127,6 +142,11 @@ create table if not exists public.archived_comments (
   updated_at timestamptz not null default now(),
   archived_at timestamptz not null default now()
 );
+
+alter table public.archived_comments drop constraint if exists archived_comments_checklist_type_check;
+alter table public.archived_comments
+  add constraint archived_comments_checklist_type_check
+  check (checklist_type in ('open', 'always', 'close'));
 
 alter table public.archived_comments add column if not exists employee_id uuid references public.employees(id) on delete set null;
 alter table public.archived_comments add column if not exists employee_name text not null default '';
@@ -163,6 +183,7 @@ where employees.id = ordered_employees.id;
 
 update public.spaces
 set open_checklist_template = coalesce(open_checklist_template, ''),
+    always_checklist_template = coalesce(always_checklist_template, ''),
     close_checklist_template = coalesce(close_checklist_template, ''),
     sort_order = coalesce(sort_order, 1),
     created_at = coalesce(created_at, now());

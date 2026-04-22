@@ -1,6 +1,7 @@
-import { createId, getDateKey, getHourInTimeZone, getWorkDate } from "./utils.js";
+import { createId, getDateKey, getWorkDate } from "./utils.js";
 
 const STORAGE_KEY = "ddc-checklist-state-v4";
+const CHECKLIST_TYPES = ["open", "always", "close"];
 
 const nowIso = () => new Date().toISOString();
 
@@ -14,6 +15,7 @@ const demoState = {
       id: "space_demo_1",
       name: "대기실",
       open_checklist_template: "의자 정리\n바닥 오염 확인\n안내문 비치 상태 확인",
+      always_checklist_template: "대기 인원 흐름 확인\n정수기 상태 확인\n안내 데스크 정돈 상태 확인",
       close_checklist_template: "의자 원위치 확인\n쓰레기 정리\n전등 소등 상태 확인",
       is_active: true,
       sort_order: 1,
@@ -23,6 +25,7 @@ const demoState = {
       id: "space_demo_2",
       name: "처치실",
       open_checklist_template: "소모품 수량 확인\n장비 전원 확인\n폐기물함 상태 확인",
+      always_checklist_template: "소독 용액 잔량 확인\n베드 정리 상태 확인\n사용 장비 이상 여부 확인",
       close_checklist_template: "사용 물품 정리\n장비 전원 종료 확인\n폐기물 마감 상태 확인",
       is_active: true,
       sort_order: 2,
@@ -39,8 +42,7 @@ const demoState = {
     timezone: "Asia/Seoul",
     show_employee_name: true,
     admin_password: "8883",
-    last_open_archive_date: null,
-    last_close_archive_date: null,
+    last_daily_archive_date: null,
     updated_at: nowIso(),
   },
 };
@@ -148,6 +150,7 @@ function normalizeState(raw) {
     ...space,
     sort_order: Number(space.sort_order ?? index + 1),
     open_checklist_template: space.open_checklist_template ?? "",
+    always_checklist_template: space.always_checklist_template ?? "",
     close_checklist_template: space.close_checklist_template ?? "",
   }));
 
@@ -282,17 +285,29 @@ function finalizeChecklistForDate(state, checklistType, targetDate) {
 
 function autoArchiveIfNeeded(state, timezone = "Asia/Seoul") {
   const today = getWorkDate(timezone);
-  const hour = getHourInTimeZone(timezone);
-
-  if (hour >= 15 && state.app_settings.last_open_archive_date !== today) {
-    finalizeChecklistForDate(state, "open", today);
-    state.app_settings.last_open_archive_date = today;
-  }
-
   const yesterday = getYesterdayKey(timezone);
-  if (state.app_settings.last_close_archive_date !== yesterday) {
-    finalizeChecklistForDate(state, "close", yesterday);
-    state.app_settings.last_close_archive_date = yesterday;
+  const staleDates = [
+    ...new Set(
+      [...state.current_checks, ...state.current_comments]
+        .map((item) => item.work_date)
+        .filter((workDate) => workDate && workDate < today),
+    ),
+  ].sort();
+
+  if (!state.app_settings.last_daily_archive_date) {
+    if (staleDates.length) {
+      staleDates.forEach((workDate) => {
+        CHECKLIST_TYPES.forEach((checklistType) => {
+          finalizeChecklistForDate(state, checklistType, workDate);
+        });
+      });
+    }
+    state.app_settings.last_daily_archive_date = yesterday;
+  } else if (state.app_settings.last_daily_archive_date !== yesterday) {
+    CHECKLIST_TYPES.forEach((checklistType) => {
+      finalizeChecklistForDate(state, checklistType, yesterday);
+    });
+    state.app_settings.last_daily_archive_date = yesterday;
   }
 
   pruneArchivedChecks(state);
@@ -359,6 +374,7 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
         id: createId("space"),
         name,
         open_checklist_template: "",
+        always_checklist_template: "",
         close_checklist_template: "",
         is_active: true,
         sort_order: sortSpaces(state.spaces).length + 1,

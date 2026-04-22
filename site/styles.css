@@ -388,7 +388,7 @@ button {
 
 .checklist-switch {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   width: 100%;
 }
@@ -557,39 +557,99 @@ button:hover,
 }
 
 .space-card__header-actions {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  flex-shrink: 0;
+  min-width: 0;
   margin-left: auto;
 }
 
-.space-card__details-toggle {
+.space-card__type-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 14px;
+  background: rgba(28, 42, 37, 0.04);
+  border: 1px solid rgba(28, 42, 37, 0.08);
+}
+
+.space-card__type-control.is-active {
+  background: rgba(216, 239, 231, 0.74);
+  border-color: rgba(21, 111, 92, 0.18);
+}
+
+.space-card__type-button {
   position: relative;
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
-  min-height: 36px;
   padding: 0;
-  border-radius: 12px;
-  font-size: 20px;
-  line-height: 1;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
-.space-card__details-toggle.is-open {
-  background: rgba(216, 239, 231, 0.9);
+.space-card__type-button.is-active {
+  color: var(--primary-strong);
 }
 
-.space-card__details-toggle.has-note::after {
+.space-card__type-button.has-note::after {
   content: "";
   position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 8px;
-  height: 8px;
+  top: -2px;
+  right: -6px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
   background: var(--warning-text);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.95);
+}
+
+.space-card__checkbox {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.space-card__checkbox-input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.space-card__checkbox-ui {
+  position: relative;
+  pointer-events: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid rgba(28, 42, 37, 0.2);
+  background: rgba(255, 255, 255, 0.96);
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.space-card__checkbox.is-checked .space-card__checkbox-ui {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.space-card__checkbox.is-checked .space-card__checkbox-ui::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  width: 5px;
+  height: 9px;
+  border-right: 2px solid white;
+  border-bottom: 2px solid white;
+  transform: rotate(45deg);
 }
 
 .space-card__details {
@@ -598,11 +658,6 @@ button:hover,
   padding-top: 12px;
 }
 
-.space-card__details-summary {
-  display: none !important;
-}
-
-.space-card__details summary,
 .manage-space-card details summary {
   list-style: none;
   display: flex;
@@ -613,13 +668,16 @@ button:hover,
   font-weight: 700;
 }
 
-.space-card__details summary {
-  padding: 4px 0;
-}
-
-.space-card__details summary::-webkit-details-marker,
 .manage-space-card details summary::-webkit-details-marker {
   display: none;
+}
+
+.space-card__details-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .space-card__details-body,
@@ -758,6 +816,10 @@ button:hover,
   background: var(--warning-text);
 }
 
+.calendar-dot.is-always {
+  background: #2c74b3;
+}
+
 .calendar-nav {
   width: 100%;
   justify-content: space-between;
@@ -841,7 +903,15 @@ button:hover,
   }
 
   .checklist-switch {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .space-card__header {
+    align-items: flex-start;
+  }
+
+  .space-card__header-actions {
+    width: auto;
   }
 
   .calendar-nav {
