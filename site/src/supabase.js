@@ -169,7 +169,11 @@ export async function createSupabaseRepository(config) {
 
   return {
     async getBootstrap() {
-      await autoArchiveIfNeeded();
+      try {
+        await autoArchiveIfNeeded();
+      } catch (error) {
+        console.warn("자동 기록 보관 처리에 실패했습니다.", error);
+      }
       const workDate = getWorkDate(timezone);
       const [
         { data: employees, error: employeeError },

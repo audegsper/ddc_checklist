@@ -10,7 +10,7 @@ import {
   getWorkDate,
 } from "./utils.js";
 
-const APP_VERSION = "버전 0.8.0";
+const APP_VERSION = "버전 0.8.1";
 const config = window.__APP_CONFIG__ ?? {};
 
 const state = {
@@ -202,7 +202,7 @@ async function refresh() {
 function renderHeader() {
   setText(elements.title, config.appName || "병원 체크리스트");
   setText(elements.todayLabel, formatKoreanDate(new Date(), config.timezone || "Asia/Seoul"));
-  setText(elements.syncPill, canUseSupabase() ? "Supabase 연결됨" : "데모 모드");
+  setText(elements.syncPill, canUseSupabase() ? "Supabase 연결됨" : "로컬 저장 모드");
   setText(elements.versionPill, APP_VERSION);
   setText(
     elements.setupStatus,
@@ -906,11 +906,14 @@ function bindForms() {
 async function init() {
   try {
     initializeElements();
+    renderHeader();
     state.repository = await createRepository();
     bindTabs();
     bindForms();
     await refresh();
   } catch (error) {
+    renderHeader();
+    setText(elements.setupStatus, `앱 초기화에 실패했습니다. ${getErrorMessage(error)}`);
     if (isMissingSupabaseTable(error)) {
       showSchemaHelp(error);
       return;
