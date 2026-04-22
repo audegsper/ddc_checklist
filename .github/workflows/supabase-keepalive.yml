@@ -9,10 +9,25 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read public Supabase config
+        id: config
+        run: |
+          SUPABASE_URL=$(sed -n 's/.*supabaseUrl: "\(.*\)".*/\1/p' site/app-config.js)
+          SUPABASE_ANON_KEY=$(sed -n 's/.*supabaseAnonKey: "\(.*\)".*/\1/p' site/app-config.js)
+          USE_SUPABASE=$(sed -n 's/.*useSupabase: \(.*\),/\1/p' site/app-config.js | tr -d ' ')
+
+          echo "supabase_url=$SUPABASE_URL" >> "$GITHUB_OUTPUT"
+          echo "supabase_anon_key=$SUPABASE_ANON_KEY" >> "$GITHUB_OUTPUT"
+          echo "use_supabase=$USE_SUPABASE" >> "$GITHUB_OUTPUT"
+
       - name: Call lightweight Supabase query
+        if: ${{ steps.config.outputs.use_supabase == 'true' }}
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_URL: ${{ steps.config.outputs.supabase_url }}
+          SUPABASE_ANON_KEY: ${{ steps.config.outputs.supabase_anon_key }}
         run: |
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_ANON_KEY"
@@ -21,3 +36,6 @@ jobs:
             -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
             "$SUPABASE_URL/rest/v1/app_settings?select=id&limit=1"
 
+      - name: Skip when Supabase is disabled
+        if: ${{ steps.config.outputs.use_supabase != 'true' }}
+        run: echo "Supabase is disabled in site/app-config.js, so keepalive ping is skipped."

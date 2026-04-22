@@ -26,7 +26,7 @@
 3. Supabase 계정을 만든 뒤 [supabase/schema.sql](/home/dohykim/ddc_checklist/supabase/schema.sql) 내용을 실행합니다.
 4. `site/app-config.example.js`를 참고해 `site/app-config.js`를 수정합니다.
 5. GitHub Pages를 Actions 기반 배포로 활성화합니다.
-6. GitHub 저장소 Secrets에 `SUPABASE_URL`, `SUPABASE_ANON_KEY`를 넣으면 keepalive 워크플로를 쓸 수 있습니다.
+6. `site/app-config.js`에 값이 들어 있고 `useSupabase: true`면 keepalive 워크플로가 그 설정을 읽어 자동으로 호출합니다.
 
 ## GitHub Pages
 
@@ -37,9 +37,9 @@
 
 - 스키마: [supabase/schema.sql](/home/dohykim/ddc_checklist/supabase/schema.sql)
 - 설정 가이드: [site/app-config.example.js](/home/dohykim/ddc_checklist/site/app-config.example.js)
+- 실제 런타임 설정: [site/app-config.js](/home/dohykim/ddc_checklist/site/app-config.js)
 
 ## keepalive 주의
 
 Free Plan 휴면 완화용으로 스케줄링 요청을 넣어두었지만, 이 방식이 정책상 영구 보장을 뜻하지는 않습니다.  
 운영 전에는 Supabase 최신 무료 플랜 정책을 다시 확인하는 것을 권장합니다.
-

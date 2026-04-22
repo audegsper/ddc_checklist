@@ -120,7 +120,7 @@
               <li>`supabase/schema.sql`을 SQL Editor에서 실행합니다.</li>
               <li>`site/app-config.js`에 `supabaseUrl`, `supabaseAnonKey`를 입력합니다.</li>
               <li>`useSupabase`를 `true`로 바꾸고 페이지를 새로고침합니다.</li>
-              <li>GitHub Secrets에 `SUPABASE_URL`, `SUPABASE_ANON_KEY`를 저장하면 keepalive 워크플로를 사용할 수 있습니다.</li>
+              <li>`site/app-config.js`에 실제 값이 있고 `useSupabase`가 `true`면 keepalive 워크플로가 같은 설정을 읽어 호출합니다.</li>
             </ol>
             <div id="setup-status" class="status-box"></div>
           </div>
@@ -156,4 +156,3 @@
     <script type="module" src="./src/app.js"></script>
   </body>
 </html>
-
