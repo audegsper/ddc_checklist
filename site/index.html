@@ -29,21 +29,18 @@
       <header class="hero">
         <div class="hero__eyebrow">Daily Duty Checklist</div>
         <div class="hero__topline">
-          <div>
-            <h1 id="app-title">병원 체크리스트</h1>
-            <p id="today-label" class="hero__date"></p>
-          </div>
-          <div class="hero__meta">
+          <div class="hero__headline">
+            <h1 id="app-title">DD 체크리스트</h1>
             <div id="version-pill" class="version-pill">버전 0.9.0</div>
-            <button
-              id="setup-open-button"
-              class="icon-button icon-button--ghost"
-              type="button"
-              aria-label="설정 열기"
-            >
-              &#9881;
-            </button>
           </div>
+          <button
+            id="setup-open-button"
+            class="icon-button icon-button--ghost icon-button--setup"
+            type="button"
+            aria-label="설정 열기"
+          >
+            &#9881;
+          </button>
         </div>
 
         <div class="hero__overview">
@@ -70,6 +67,8 @@
       </header>
 
       <main class="layout">
+        <div id="panel-date" class="panel-date"></div>
+
         <nav class="tabs" aria-label="앱 섹션">
           <button class="tab is-active" data-tab="checklist" type="button">체크</button>
           <button class="tab" data-tab="history" type="button">기록</button>
@@ -85,12 +84,8 @@
 
           <div class="summary-card checklist-summary">
             <div class="checklist-switch" role="tablist" aria-label="체크 종류">
-              <button class="hero-tab is-active" data-checklist-type="open" type="button">
-                오픈 체크리스트
-              </button>
-              <button class="hero-tab" data-checklist-type="close" type="button">
-                마감 체크리스트
-              </button>
+              <button class="hero-tab is-active" data-checklist-type="open" type="button">오픈</button>
+              <button class="hero-tab" data-checklist-type="close" type="button">마감</button>
             </div>
             <div class="checklist-summary__meta">
               <strong id="summary-count">체크가 필요한 곳 0 · 체크를 완료한 곳 0</strong>

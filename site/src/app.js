@@ -12,6 +12,7 @@ import {
 } from "./utils.js";
 
 const APP_VERSION = "버전 0.9.0";
+const APP_DISPLAY_NAME = "DD 체크리스트";
 const config = window.__APP_CONFIG__ ?? {};
 const APP_TIMEZONE = config.timezone || "Asia/Seoul";
 
@@ -40,7 +41,7 @@ function initializeElements() {
     loading: document.getElementById("app-loading"),
     loadingText: document.getElementById("app-loading-text"),
     title: document.getElementById("app-title"),
-    todayLabel: document.getElementById("today-label"),
+    panelDate: document.getElementById("panel-date"),
     versionPill: document.getElementById("version-pill"),
     setupOpenButton: document.getElementById("setup-open-button"),
     setupCloseButton: document.getElementById("setup-close-button"),
@@ -429,9 +430,10 @@ async function refresh() {
 }
 
 function renderHeader() {
-  setText(elements.title, config.appName || "병원 체크리스트");
-  setText(elements.todayLabel, formatKoreanDate(new Date(), APP_TIMEZONE));
+  setText(elements.title, APP_DISPLAY_NAME);
+  setText(elements.panelDate, formatKoreanDate(new Date(), APP_TIMEZONE));
   setText(elements.versionPill, APP_VERSION);
+  document.title = APP_DISPLAY_NAME;
   setText(
     elements.setupStatus,
     canUseSupabase()
@@ -456,7 +458,7 @@ function renderOverview() {
 
 function renderChecklistTabs() {
   const checklistName = getChecklistLabel();
-  setText(elements.checklistTitle, `${checklistName} 공간 점검`);
+  setText(elements.checklistTitle, `${checklistName} 체크리스트`);
   setText(elements.checklistDescription, "");
 
   elements.checklistTabs.forEach((button) => {
