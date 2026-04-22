@@ -5,6 +5,10 @@ async function loadClient() {
   return createClient;
 }
 
+function getYesterdayKey(timezone = "Asia/Seoul") {
+  return getDateKey(new Date(Date.now() - 24 * 60 * 60 * 1000), timezone);
+}
+
 function normalizeBootstrap(data) {
   const settings = data.settings?.[0] ?? {
     id: "settings_default",
@@ -20,13 +24,19 @@ function normalizeBootstrap(data) {
     employees: data.employees ?? [],
     spaces: data.spaces ?? [],
     current_checks: data.current_checks ?? [],
+    current_comments: data.current_comments ?? [],
     archived_checks: data.archived_checks ?? [],
+    archived_comments: data.archived_comments ?? [],
     app_settings: settings,
   };
 }
 
-function getYesterdayKey(timezone = "Asia/Seoul") {
-  return getDateKey(new Date(Date.now() - 24 * 60 * 60 * 1000), timezone);
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function resolvePatchValue(payload, key, fallback) {
+  return hasOwn(payload, key) ? payload[key] : fallback;
 }
 
 export async function createSupabaseRepository(config) {
@@ -50,18 +60,49 @@ export async function createSupabaseRepository(config) {
 
     const sortedDates = [...new Set((archives ?? []).map((item) => item.archive_date))];
     const staleDates = sortedDates.slice(historyLimit);
-    if (staleDates.length) {
-      const { error } = await client.from("archived_checks").delete().in("archive_date", staleDates);
-      if (error) throw error;
+    if (!staleDates.length) return;
+
+    const { error: deleteChecksError } = await client
+      .from("archived_checks")
+      .delete()
+      .in("archive_date", staleDates);
+    if (deleteChecksError) throw deleteChecksError;
+
+    const { error: deleteCommentsError } = await client
+      .from("archived_comments")
+      .delete()
+      .in("archive_date", staleDates);
+    if (deleteCommentsError) throw deleteCommentsError;
+  }
+
+  async function reindexEmployees() {
+    const { data: employees, error } = await client
+      .from("employees")
+      .select("id, sort_order, created_at")
+      .eq("is_active", true)
+      .order("sort_order")
+      .order("created_at");
+    if (error) throw error;
+
+    for (const [index, employee] of (employees ?? []).entries()) {
+      const nextOrder = index + 1;
+      if (Number(employee.sort_order) !== nextOrder) {
+        const { error: updateError } = await client
+          .from("employees")
+          .update({ sort_order: nextOrder })
+          .eq("id", employee.id);
+        if (updateError) throw updateError;
+      }
     }
   }
 
   async function reindexSpaces() {
     const { data: spaces, error } = await client
       .from("spaces")
-      .select("id, sort_order")
+      .select("id, sort_order, created_at")
       .eq("is_active", true)
-      .order("sort_order");
+      .order("sort_order")
+      .order("created_at");
     if (error) throw error;
 
     for (const [index, space] of (spaces ?? []).entries()) {
@@ -77,17 +118,27 @@ export async function createSupabaseRepository(config) {
   }
 
   async function finalizeChecklistForDate(checklistType, targetDate) {
-    const [{ data: spaces, error: spacesError }, { data: currentChecks, error: currentError }] =
-      await Promise.all([
-        client.from("spaces").select("*").eq("is_active", true).order("sort_order"),
-        client
-          .from("current_checks")
-          .select("*")
-          .eq("work_date", targetDate)
-          .eq("checklist_type", checklistType),
-      ]);
+    const [
+      { data: spaces, error: spacesError },
+      { data: currentChecks, error: currentError },
+      { data: currentComments, error: commentsError },
+    ] = await Promise.all([
+      client.from("spaces").select("*").eq("is_active", true).order("sort_order"),
+      client
+        .from("current_checks")
+        .select("*")
+        .eq("work_date", targetDate)
+        .eq("checklist_type", checklistType),
+      client
+        .from("current_comments")
+        .select("*")
+        .eq("work_date", targetDate)
+        .eq("checklist_type", checklistType)
+        .order("created_at"),
+    ]);
     if (spacesError) throw spacesError;
     if (currentError) throw currentError;
+    if (commentsError) throw commentsError;
 
     const { error: deleteExistingArchiveError } = await client
       .from("archived_checks")
@@ -95,6 +146,13 @@ export async function createSupabaseRepository(config) {
       .eq("archive_date", targetDate)
       .eq("checklist_type", checklistType);
     if (deleteExistingArchiveError) throw deleteExistingArchiveError;
+
+    const { error: deleteExistingArchiveCommentsError } = await client
+      .from("archived_comments")
+      .delete()
+      .eq("archive_date", targetDate)
+      .eq("checklist_type", checklistType);
+    if (deleteExistingArchiveCommentsError) throw deleteExistingArchiveCommentsError;
 
     const currentMap = new Map((currentChecks ?? []).map((item) => [item.space_id, item]));
     const archivePayload = (spaces ?? []).map((space) => {
@@ -105,11 +163,11 @@ export async function createSupabaseRepository(config) {
         space_id: space.id,
         space_name: space.name,
         checked: Boolean(current?.checked),
-        comment: current?.comment ?? "",
+        comment: "",
         employee_id: current?.employee_id ?? null,
         employee_name: current?.employee_name ?? "",
-        comment_employee_id: current?.comment_employee_id ?? null,
-        comment_employee_name: current?.comment_employee_name ?? "",
+        comment_employee_id: null,
+        comment_employee_name: "",
         sort_order: space.sort_order,
       };
     });
@@ -119,12 +177,42 @@ export async function createSupabaseRepository(config) {
       if (insertArchiveError) throw insertArchiveError;
     }
 
-    const { error: deleteCurrentError } = await client
+    const archiveCommentPayload = (currentComments ?? []).map((comment) => {
+      const space = (spaces ?? []).find((item) => item.id === comment.space_id);
+      return {
+        archive_date: targetDate,
+        checklist_type: checklistType,
+        space_id: comment.space_id,
+        space_name: comment.space_name,
+        employee_id: comment.employee_id ?? null,
+        employee_name: comment.employee_name ?? "",
+        content: comment.content ?? "",
+        sort_order: Number(space?.sort_order ?? 1),
+        created_at: comment.created_at,
+        updated_at: comment.updated_at,
+      };
+    });
+
+    if (archiveCommentPayload.length) {
+      const { error: insertArchiveCommentsError } = await client
+        .from("archived_comments")
+        .insert(archiveCommentPayload);
+      if (insertArchiveCommentsError) throw insertArchiveCommentsError;
+    }
+
+    const { error: deleteCurrentChecksError } = await client
       .from("current_checks")
       .delete()
       .eq("work_date", targetDate)
       .eq("checklist_type", checklistType);
-    if (deleteCurrentError) throw deleteCurrentError;
+    if (deleteCurrentChecksError) throw deleteCurrentChecksError;
+
+    const { error: deleteCurrentCommentsError } = await client
+      .from("current_comments")
+      .delete()
+      .eq("work_date", targetDate)
+      .eq("checklist_type", checklistType);
+    if (deleteCurrentCommentsError) throw deleteCurrentCommentsError;
   }
 
   async function autoArchiveIfNeeded() {
@@ -168,48 +256,79 @@ export async function createSupabaseRepository(config) {
       } catch (error) {
         console.warn("자동 기록 보관 처리에 실패했습니다.", error);
       }
+
       const workDate = getWorkDate(timezone);
       const [
         { data: employees, error: employeeError },
         { data: spaces, error: spaceError },
         { data: currentChecks, error: currentError },
+        { data: currentComments, error: currentCommentsError },
         { data: archivedChecks, error: archivedError },
+        { data: archivedComments, error: archivedCommentsError },
         { data: settings, error: settingsError },
       ] = await Promise.all([
-        client.from("employees").select("*").eq("is_active", true).order("created_at"),
-        client.from("spaces").select("*").eq("is_active", true).order("sort_order"),
+        client.from("employees").select("*").eq("is_active", true).order("sort_order").order("created_at"),
+        client.from("spaces").select("*").eq("is_active", true).order("sort_order").order("created_at"),
         client
           .from("current_checks")
           .select("*")
           .eq("work_date", workDate)
           .order("updated_at", { ascending: false }),
         client
+          .from("current_comments")
+          .select("*")
+          .eq("work_date", workDate)
+          .order("created_at"),
+        client
           .from("archived_checks")
           .select("*")
           .order("archive_date", { ascending: false })
           .order("sort_order"),
+        client
+          .from("archived_comments")
+          .select("*")
+          .order("archive_date", { ascending: false })
+          .order("sort_order")
+          .order("created_at"),
         client.from("app_settings").select("*").limit(1),
       ]);
 
       if (employeeError) throw employeeError;
       if (spaceError) throw spaceError;
       if (currentError) throw currentError;
+      if (currentCommentsError) throw currentCommentsError;
       if (archivedError) throw archivedError;
+      if (archivedCommentsError) throw archivedCommentsError;
       if (settingsError) throw settingsError;
 
       return normalizeBootstrap({
         employees,
         spaces,
         current_checks: currentChecks,
+        current_comments: currentComments,
         archived_checks: archivedChecks,
+        archived_comments: archivedComments,
         settings,
       });
     },
 
     async addEmployee(name) {
+      const { data: lastEmployee, error: lastEmployeeError } = await client
+        .from("employees")
+        .select("sort_order")
+        .eq("is_active", true)
+        .order("sort_order", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lastEmployeeError) throw lastEmployeeError;
+
       const { data, error } = await client
         .from("employees")
-        .insert({ name, is_active: true })
+        .insert({
+          name,
+          is_active: true,
+          sort_order: Number(lastEmployee?.sort_order ?? 0) + 1,
+        })
         .select()
         .single();
       if (error) throw error;
@@ -219,6 +338,17 @@ export async function createSupabaseRepository(config) {
     async deleteEmployee(employeeId) {
       const { error } = await client.from("employees").delete().eq("id", employeeId);
       if (error) throw error;
+      await reindexEmployees();
+    },
+
+    async saveEmployeeOrder(employeeIds) {
+      for (const [index, employeeId] of employeeIds.entries()) {
+        const { error } = await client
+          .from("employees")
+          .update({ sort_order: index + 1 })
+          .eq("id", employeeId);
+        if (error) throw error;
+      }
     },
 
     async addSpace(name) {
@@ -262,7 +392,8 @@ export async function createSupabaseRepository(config) {
         .from("spaces")
         .select("id, sort_order")
         .eq("is_active", true)
-        .order("sort_order");
+        .order("sort_order")
+        .order("created_at");
       if (spacesError) throw spacesError;
 
       const list = spaces ?? [];
@@ -315,7 +446,10 @@ export async function createSupabaseRepository(config) {
         });
         if (error) throw error;
       } else {
-        const { error } = await client.from("app_settings").update(patch).eq("id", existing.id);
+        const { error } = await client
+          .from("app_settings")
+          .update({ ...patch, updated_at: new Date().toISOString() })
+          .eq("id", existing.id);
         if (error) throw error;
       }
 
@@ -368,13 +502,12 @@ export async function createSupabaseRepository(config) {
         checklist_type: payload.checklist_type,
         space_id: payload.space_id,
         space_name: payload.space_name,
-        checked: payload.checked ?? existing?.checked ?? false,
-        comment: payload.comment ?? existing?.comment ?? "",
-        employee_id: payload.employee_id ?? existing?.employee_id ?? null,
-        employee_name: payload.employee_name ?? existing?.employee_name ?? "",
-        comment_employee_id: payload.comment_employee_id ?? existing?.comment_employee_id ?? null,
-        comment_employee_name:
-          payload.comment_employee_name ?? existing?.comment_employee_name ?? "",
+        checked: resolvePatchValue(payload, "checked", existing?.checked ?? false),
+        comment: existing?.comment ?? "",
+        employee_id: resolvePatchValue(payload, "employee_id", existing?.employee_id ?? null),
+        employee_name: resolvePatchValue(payload, "employee_name", existing?.employee_name ?? ""),
+        comment_employee_id: existing?.comment_employee_id ?? null,
+        comment_employee_name: existing?.comment_employee_name ?? "",
         updated_at: new Date().toISOString(),
       };
 
@@ -387,30 +520,30 @@ export async function createSupabaseRepository(config) {
       }
     },
 
-    async clearCurrentComment({ checklistType, spaceId, workDate }) {
-      const targetDate = workDate ?? getWorkDate(timezone);
-      const { data: existing, error: existingError } = await client
-        .from("current_checks")
-        .select("*")
-        .eq("work_date", targetDate)
-        .eq("checklist_type", checklistType)
-        .eq("space_id", spaceId)
-        .limit(1)
-        .maybeSingle();
-      if (existingError) throw existingError;
+    async addCurrentComment(payload) {
+      const { error } = await client.from("current_comments").insert({
+        work_date: payload.work_date ?? getWorkDate(timezone),
+        checklist_type: payload.checklist_type,
+        space_id: payload.space_id,
+        space_name: payload.space_name,
+        employee_id: payload.employee_id ?? null,
+        employee_name: payload.employee_name ?? "",
+        content: payload.content ?? "",
+      });
+      if (error) throw error;
+    },
 
-      if (existing) {
-        const { error } = await client
-          .from("current_checks")
-          .update({
-            comment: "",
-            comment_employee_id: null,
-            comment_employee_name: "",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", existing.id);
-        if (error) throw error;
-      }
+    async updateCurrentComment({ commentId, content }) {
+      const { error } = await client
+        .from("current_comments")
+        .update({ content, updated_at: new Date().toISOString() })
+        .eq("id", commentId);
+      if (error) throw error;
+    },
+
+    async deleteCurrentComment({ commentId }) {
+      const { error } = await client.from("current_comments").delete().eq("id", commentId);
+      if (error) throw error;
     },
   };
 }

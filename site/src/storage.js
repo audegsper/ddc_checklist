@@ -6,8 +6,8 @@ const nowIso = () => new Date().toISOString();
 
 const demoState = {
   employees: [
-    { id: "emp_demo_1", name: "김도현", is_active: true, created_at: nowIso() },
-    { id: "emp_demo_2", name: "이수진", is_active: true, created_at: nowIso() },
+    { id: "emp_demo_1", name: "김도현", is_active: true, sort_order: 1, created_at: nowIso() },
+    { id: "emp_demo_2", name: "이수진", is_active: true, sort_order: 2, created_at: nowIso() },
   ],
   spaces: [
     {
@@ -30,7 +30,9 @@ const demoState = {
     },
   ],
   current_checks: [],
+  current_comments: [],
   archived_checks: [],
+  archived_comments: [],
   app_settings: {
     id: "settings_default",
     history_limit: 10,
@@ -43,23 +45,133 @@ const demoState = {
   },
 };
 
+function cloneDemoState() {
+  return structuredClone(demoState);
+}
+
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function resolvePatchValue(payload, key, fallback) {
+  return hasOwn(payload, key) ? payload[key] : fallback;
+}
+
+function sortEmployees(employees) {
+  return [...employees]
+    .filter((employee) => employee.is_active !== false)
+    .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
+}
+
+function sortSpaces(spaces) {
+  return [...spaces]
+    .filter((space) => space.is_active !== false)
+    .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
+}
+
+function reindexEmployees(state) {
+  state.employees = sortEmployees(state.employees).map((employee, index) => ({
+    ...employee,
+    sort_order: index + 1,
+  }));
+}
+
+function reindexSpaces(state) {
+  state.spaces = sortSpaces(state.spaces).map((space, index) => ({
+    ...space,
+    sort_order: index + 1,
+  }));
+}
+
+function getYesterdayKey(timezone = "Asia/Seoul") {
+  return getDateKey(new Date(Date.now() - 24 * 60 * 60 * 1000), timezone);
+}
+
+function migrateLegacyComments(state) {
+  if (!state.current_comments.length) {
+    state.current_comments = state.current_checks
+      .filter((item) => item.comment?.trim())
+      .map((item) => ({
+        id: createId("comment"),
+        work_date: item.work_date,
+        checklist_type: item.checklist_type,
+        space_id: item.space_id,
+        space_name: item.space_name,
+        employee_id: item.comment_employee_id ?? item.employee_id ?? null,
+        employee_name: item.comment_employee_name ?? item.employee_name ?? "",
+        content: item.comment,
+        created_at: item.updated_at ?? nowIso(),
+        updated_at: item.updated_at ?? nowIso(),
+      }));
+  }
+
+  if (!state.archived_comments.length) {
+    state.archived_comments = state.archived_checks
+      .filter((item) => item.comment?.trim())
+      .map((item) => ({
+        id: createId("archive_comment"),
+        archive_date: item.archive_date,
+        checklist_type: item.checklist_type,
+        space_id: item.space_id,
+        space_name: item.space_name,
+        employee_id: item.comment_employee_id ?? item.employee_id ?? null,
+        employee_name: item.comment_employee_name ?? item.employee_name ?? "",
+        content: item.comment,
+        sort_order: item.sort_order ?? 1,
+        created_at: item.archived_at ?? nowIso(),
+        updated_at: item.archived_at ?? nowIso(),
+        archived_at: item.archived_at ?? nowIso(),
+      }));
+  }
+}
+
+function normalizeState(raw) {
+  const state = {
+    employees: Array.isArray(raw?.employees) ? raw.employees : [],
+    spaces: Array.isArray(raw?.spaces) ? raw.spaces : [],
+    current_checks: Array.isArray(raw?.current_checks) ? raw.current_checks : [],
+    current_comments: Array.isArray(raw?.current_comments) ? raw.current_comments : [],
+    archived_checks: Array.isArray(raw?.archived_checks) ? raw.archived_checks : [],
+    archived_comments: Array.isArray(raw?.archived_comments) ? raw.archived_comments : [],
+    app_settings: {
+      ...demoState.app_settings,
+      ...(raw?.app_settings ?? {}),
+    },
+  };
+
+  state.employees = state.employees.map((employee, index) => ({
+    ...employee,
+    sort_order: Number(employee.sort_order ?? index + 1),
+  }));
+
+  state.spaces = state.spaces.map((space, index) => ({
+    ...space,
+    sort_order: Number(space.sort_order ?? index + 1),
+    open_checklist_template: space.open_checklist_template ?? "",
+    close_checklist_template: space.close_checklist_template ?? "",
+  }));
+
+  migrateLegacyComments(state);
+  reindexEmployees(state);
+  reindexSpaces(state);
+  return state;
+}
+
 function readState() {
   const raw = window.localStorage.getItem(STORAGE_KEY);
   if (!raw) {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(demoState));
-    return structuredClone(demoState);
+    const state = cloneDemoState();
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    return state;
   }
 
   try {
     const parsed = JSON.parse(raw);
-    parsed.app_settings = {
-      ...demoState.app_settings,
-      ...parsed.app_settings,
-    };
-    return parsed;
+    return normalizeState(parsed);
   } catch {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(demoState));
-    return structuredClone(demoState);
+    const state = cloneDemoState();
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    return state;
   }
 }
 
@@ -74,23 +186,9 @@ function pruneArchivedChecks(state) {
   );
   const allowedDates = new Set(sortedDates.slice(0, limit));
   state.archived_checks = state.archived_checks.filter((item) => allowedDates.has(item.archive_date));
-}
-
-function sortSpaces(spaces) {
-  return [...spaces]
-    .filter((space) => space.is_active !== false)
-    .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
-}
-
-function reindexSpaces(state) {
-  state.spaces = sortSpaces(state.spaces).map((space, index) => ({
-    ...space,
-    sort_order: index + 1,
-  }));
-}
-
-function getYesterdayKey(timezone = "Asia/Seoul") {
-  return getDateKey(new Date(Date.now() - 24 * 60 * 60 * 1000), timezone);
+  state.archived_comments = state.archived_comments.filter((item) =>
+    allowedDates.has(item.archive_date),
+  );
 }
 
 function upsertCurrentCheck(state, payload) {
@@ -108,12 +206,12 @@ function upsertCurrentCheck(state, payload) {
     checklist_type: payload.checklist_type,
     space_id: payload.space_id,
     space_name: payload.space_name,
-    checked: payload.checked ?? current?.checked ?? false,
-    comment: payload.comment ?? current?.comment ?? "",
-    employee_id: payload.employee_id ?? current?.employee_id ?? null,
-    employee_name: payload.employee_name ?? current?.employee_name ?? "",
-    comment_employee_id: payload.comment_employee_id ?? current?.comment_employee_id ?? null,
-    comment_employee_name: payload.comment_employee_name ?? current?.comment_employee_name ?? "",
+    checked: resolvePatchValue(payload, "checked", current?.checked ?? false),
+    employee_id: resolvePatchValue(payload, "employee_id", current?.employee_id ?? null),
+    employee_name: resolvePatchValue(payload, "employee_name", current?.employee_name ?? ""),
+    comment: current?.comment ?? "",
+    comment_employee_id: current?.comment_employee_id ?? null,
+    comment_employee_name: current?.comment_employee_name ?? "",
     updated_at: nowIso(),
   };
 
@@ -131,6 +229,9 @@ function finalizeChecklistForDate(state, checklistType, targetDate) {
   state.archived_checks = state.archived_checks.filter(
     (item) => !(item.archive_date === targetDate && item.checklist_type === checklistType),
   );
+  state.archived_comments = state.archived_comments.filter(
+    (item) => !(item.archive_date === targetDate && item.checklist_type === checklistType),
+  );
 
   sortSpaces(state.spaces).forEach((space) => {
     const current = currentMap.get(space.id);
@@ -141,17 +242,40 @@ function finalizeChecklistForDate(state, checklistType, targetDate) {
       space_id: space.id,
       space_name: space.name,
       checked: Boolean(current?.checked),
-      comment: current?.comment ?? "",
+      comment: "",
       employee_id: current?.employee_id ?? null,
       employee_name: current?.employee_name ?? "",
-      comment_employee_id: current?.comment_employee_id ?? null,
-      comment_employee_name: current?.comment_employee_name ?? "",
+      comment_employee_id: null,
+      comment_employee_name: "",
       sort_order: space.sort_order,
       archived_at: nowIso(),
     });
   });
 
+  state.current_comments
+    .filter((item) => item.work_date === targetDate && item.checklist_type === checklistType)
+    .forEach((item) => {
+      const space = state.spaces.find((entry) => entry.id === item.space_id);
+      state.archived_comments.push({
+        id: createId("archive_comment"),
+        archive_date: targetDate,
+        checklist_type: checklistType,
+        space_id: item.space_id,
+        space_name: item.space_name,
+        employee_id: item.employee_id ?? null,
+        employee_name: item.employee_name ?? "",
+        content: item.content ?? "",
+        sort_order: Number(space?.sort_order ?? 1),
+        created_at: item.created_at ?? nowIso(),
+        updated_at: item.updated_at ?? nowIso(),
+        archived_at: nowIso(),
+      });
+    });
+
   state.current_checks = state.current_checks.filter(
+    (item) => !(item.work_date === targetDate && item.checklist_type === checklistType),
+  );
+  state.current_comments = state.current_comments.filter(
     (item) => !(item.work_date === targetDate && item.checklist_type === checklistType),
   );
 }
@@ -179,6 +303,7 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
     async getBootstrap() {
       const state = readState();
       autoArchiveIfNeeded(state, timezone);
+      reindexEmployees(state);
       reindexSpaces(state);
       writeState(state);
       return structuredClone(state);
@@ -190,8 +315,10 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
         id: createId("emp"),
         name,
         is_active: true,
+        sort_order: sortEmployees(state.employees).length + 1,
         created_at: nowIso(),
       });
+      reindexEmployees(state);
       writeState(state);
       return state.employees[state.employees.length - 1];
     },
@@ -200,31 +327,29 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
       const state = readState();
       state.employees = state.employees.filter((employee) => employee.id !== employeeId);
       state.current_checks = state.current_checks.map((item) =>
-        item.employee_id === employeeId || item.comment_employee_id === employeeId
-          ? {
-              ...item,
-              employee_id: item.employee_id === employeeId ? null : item.employee_id,
-              employee_name: item.employee_id === employeeId ? "" : item.employee_name,
-              comment_employee_id:
-                item.comment_employee_id === employeeId ? null : item.comment_employee_id,
-              comment_employee_name:
-                item.comment_employee_id === employeeId ? "" : item.comment_employee_name,
-            }
-          : item,
+        item.employee_id === employeeId ? { ...item, employee_id: null } : item,
       );
       state.archived_checks = state.archived_checks.map((item) =>
-        item.employee_id === employeeId || item.comment_employee_id === employeeId
-          ? {
-              ...item,
-              employee_id: item.employee_id === employeeId ? null : item.employee_id,
-              employee_name: item.employee_id === employeeId ? "" : item.employee_name,
-              comment_employee_id:
-                item.comment_employee_id === employeeId ? null : item.comment_employee_id,
-              comment_employee_name:
-                item.comment_employee_id === employeeId ? "" : item.comment_employee_name,
-            }
-          : item,
+        item.employee_id === employeeId ? { ...item, employee_id: null } : item,
       );
+      state.current_comments = state.current_comments.map((item) =>
+        item.employee_id === employeeId ? { ...item, employee_id: null } : item,
+      );
+      state.archived_comments = state.archived_comments.map((item) =>
+        item.employee_id === employeeId ? { ...item, employee_id: null } : item,
+      );
+      reindexEmployees(state);
+      writeState(state);
+    },
+
+    async saveEmployeeOrder(employeeIds) {
+      const state = readState();
+      const map = new Map(state.employees.map((employee) => [employee.id, employee]));
+      state.employees = employeeIds
+        .map((id) => map.get(id))
+        .filter(Boolean)
+        .map((employee, index) => ({ ...employee, sort_order: index + 1 }));
+      reindexEmployees(state);
       writeState(state);
     },
 
@@ -249,6 +374,8 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
       state.spaces = state.spaces.filter((space) => space.id !== spaceId);
       state.current_checks = state.current_checks.filter((item) => item.space_id !== spaceId);
       state.archived_checks = state.archived_checks.filter((item) => item.space_id !== spaceId);
+      state.current_comments = state.current_comments.filter((item) => item.space_id !== spaceId);
+      state.archived_comments = state.archived_comments.filter((item) => item.space_id !== spaceId);
       reindexSpaces(state);
       writeState(state);
     },
@@ -318,17 +445,34 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
       writeState(state);
     },
 
-    async clearCurrentComment({ checklistType, spaceId, workDate }) {
+    async addCurrentComment(payload) {
       const state = readState();
-      upsertCurrentCheck(state, {
-        work_date: workDate ?? getWorkDate(timezone),
-        checklist_type: checklistType,
-        space_id: spaceId,
-        space_name: state.spaces.find((item) => item.id === spaceId)?.name ?? "",
-        comment: "",
-        comment_employee_id: null,
-        comment_employee_name: "",
+      state.current_comments.push({
+        id: createId("comment"),
+        work_date: payload.work_date ?? getWorkDate(timezone),
+        checklist_type: payload.checklist_type,
+        space_id: payload.space_id,
+        space_name: payload.space_name,
+        employee_id: payload.employee_id ?? null,
+        employee_name: payload.employee_name ?? "",
+        content: payload.content ?? "",
+        created_at: nowIso(),
+        updated_at: nowIso(),
       });
+      writeState(state);
+    },
+
+    async updateCurrentComment({ commentId, content }) {
+      const state = readState();
+      state.current_comments = state.current_comments.map((item) =>
+        item.id === commentId ? { ...item, content, updated_at: nowIso() } : item,
+      );
+      writeState(state);
+    },
+
+    async deleteCurrentComment({ commentId }) {
+      const state = readState();
+      state.current_comments = state.current_comments.filter((item) => item.id !== commentId);
       writeState(state);
     },
   };

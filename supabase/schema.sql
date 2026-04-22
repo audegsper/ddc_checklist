@@ -4,8 +4,13 @@ create table if not exists public.employees (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   is_active boolean not null default true,
+  sort_order integer not null default 1,
   created_at timestamptz not null default now()
 );
+
+alter table public.employees add column if not exists is_active boolean not null default true;
+alter table public.employees add column if not exists sort_order integer not null default 1;
+alter table public.employees add column if not exists created_at timestamptz not null default now();
 
 create table if not exists public.spaces (
   id uuid primary key default gen_random_uuid(),
@@ -58,8 +63,31 @@ create table if not exists public.current_checks (
   unique (work_date, checklist_type, space_id)
 );
 
+alter table public.current_checks add column if not exists comment text not null default '';
+alter table public.current_checks add column if not exists employee_id uuid references public.employees(id) on delete set null;
+alter table public.current_checks add column if not exists employee_name text not null default '';
 alter table public.current_checks add column if not exists comment_employee_id uuid references public.employees(id) on delete set null;
 alter table public.current_checks add column if not exists comment_employee_name text not null default '';
+alter table public.current_checks add column if not exists updated_at timestamptz not null default now();
+
+create table if not exists public.current_comments (
+  id uuid primary key default gen_random_uuid(),
+  work_date date not null,
+  checklist_type text not null check (checklist_type in ('open', 'close')),
+  space_id uuid not null references public.spaces(id) on delete cascade,
+  space_name text not null,
+  employee_id uuid references public.employees(id) on delete set null,
+  employee_name text not null default '',
+  content text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.current_comments add column if not exists employee_id uuid references public.employees(id) on delete set null;
+alter table public.current_comments add column if not exists employee_name text not null default '';
+alter table public.current_comments add column if not exists content text not null default '';
+alter table public.current_comments add column if not exists created_at timestamptz not null default now();
+alter table public.current_comments add column if not exists updated_at timestamptz not null default now();
 
 create table if not exists public.archived_checks (
   id uuid primary key default gen_random_uuid(),
@@ -77,8 +105,36 @@ create table if not exists public.archived_checks (
   archived_at timestamptz not null default now()
 );
 
+alter table public.archived_checks add column if not exists comment text not null default '';
+alter table public.archived_checks add column if not exists employee_id uuid references public.employees(id) on delete set null;
+alter table public.archived_checks add column if not exists employee_name text not null default '';
 alter table public.archived_checks add column if not exists comment_employee_id uuid references public.employees(id) on delete set null;
 alter table public.archived_checks add column if not exists comment_employee_name text not null default '';
+alter table public.archived_checks add column if not exists sort_order integer not null default 1;
+alter table public.archived_checks add column if not exists archived_at timestamptz not null default now();
+
+create table if not exists public.archived_comments (
+  id uuid primary key default gen_random_uuid(),
+  archive_date date not null,
+  checklist_type text not null check (checklist_type in ('open', 'close')),
+  space_id uuid references public.spaces(id) on delete cascade,
+  space_name text not null,
+  employee_id uuid references public.employees(id) on delete set null,
+  employee_name text not null default '',
+  content text not null default '',
+  sort_order integer not null default 1,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  archived_at timestamptz not null default now()
+);
+
+alter table public.archived_comments add column if not exists employee_id uuid references public.employees(id) on delete set null;
+alter table public.archived_comments add column if not exists employee_name text not null default '';
+alter table public.archived_comments add column if not exists content text not null default '';
+alter table public.archived_comments add column if not exists sort_order integer not null default 1;
+alter table public.archived_comments add column if not exists created_at timestamptz not null default now();
+alter table public.archived_comments add column if not exists updated_at timestamptz not null default now();
+alter table public.archived_comments add column if not exists archived_at timestamptz not null default now();
 
 drop table if exists public.activity_logs;
 
@@ -91,16 +147,111 @@ set show_employee_name = coalesce(show_employee_name, true),
     admin_password = coalesce(admin_password, '8883'),
     updated_at = coalesce(updated_at, now());
 
+update public.employees
+set sort_order = coalesce(sort_order, 1),
+    created_at = coalesce(created_at, now());
+
+with ordered_employees as (
+  select id, row_number() over (order by sort_order, created_at, id) as next_order
+  from public.employees
+  where is_active = true
+)
+update public.employees employees
+set sort_order = ordered_employees.next_order
+from ordered_employees
+where employees.id = ordered_employees.id;
+
 update public.spaces
 set open_checklist_template = coalesce(open_checklist_template, ''),
     close_checklist_template = coalesce(close_checklist_template, ''),
-    sort_order = coalesce(sort_order, 1);
+    sort_order = coalesce(sort_order, 1),
+    created_at = coalesce(created_at, now());
+
+with ordered_spaces as (
+  select id, row_number() over (order by sort_order, created_at, id) as next_order
+  from public.spaces
+  where is_active = true
+)
+update public.spaces spaces
+set sort_order = ordered_spaces.next_order
+from ordered_spaces
+where spaces.id = ordered_spaces.id;
+
+insert into public.current_comments (
+  work_date,
+  checklist_type,
+  space_id,
+  space_name,
+  employee_id,
+  employee_name,
+  content,
+  created_at,
+  updated_at
+)
+select
+  current_checks.work_date,
+  current_checks.checklist_type,
+  current_checks.space_id,
+  current_checks.space_name,
+  current_checks.comment_employee_id,
+  coalesce(current_checks.comment_employee_name, ''),
+  current_checks.comment,
+  coalesce(current_checks.updated_at, now()),
+  coalesce(current_checks.updated_at, now())
+from public.current_checks
+where coalesce(trim(current_checks.comment), '') <> ''
+  and not exists (
+    select 1
+    from public.current_comments
+    where public.current_comments.work_date = current_checks.work_date
+      and public.current_comments.checklist_type = current_checks.checklist_type
+      and public.current_comments.space_id = current_checks.space_id
+      and public.current_comments.content = current_checks.comment
+  );
+
+insert into public.archived_comments (
+  archive_date,
+  checklist_type,
+  space_id,
+  space_name,
+  employee_id,
+  employee_name,
+  content,
+  sort_order,
+  created_at,
+  updated_at,
+  archived_at
+)
+select
+  archived_checks.archive_date,
+  archived_checks.checklist_type,
+  archived_checks.space_id,
+  archived_checks.space_name,
+  archived_checks.comment_employee_id,
+  coalesce(archived_checks.comment_employee_name, ''),
+  archived_checks.comment,
+  coalesce(archived_checks.sort_order, 1),
+  coalesce(archived_checks.archived_at, now()),
+  coalesce(archived_checks.archived_at, now()),
+  coalesce(archived_checks.archived_at, now())
+from public.archived_checks
+where coalesce(trim(archived_checks.comment), '') <> ''
+  and not exists (
+    select 1
+    from public.archived_comments
+    where public.archived_comments.archive_date = archived_checks.archive_date
+      and public.archived_comments.checklist_type = archived_checks.checklist_type
+      and public.archived_comments.space_id = archived_checks.space_id
+      and public.archived_comments.content = archived_checks.comment
+  );
 
 alter table public.employees enable row level security;
 alter table public.spaces enable row level security;
 alter table public.app_settings enable row level security;
 alter table public.current_checks enable row level security;
+alter table public.current_comments enable row level security;
 alter table public.archived_checks enable row level security;
+alter table public.archived_comments enable row level security;
 
 drop policy if exists "public read employees" on public.employees;
 create policy "public read employees"
@@ -114,6 +265,14 @@ create policy "public write employees"
 on public.employees
 for insert
 to anon, authenticated
+with check (true);
+
+drop policy if exists "public update employees" on public.employees;
+create policy "public update employees"
+on public.employees
+for update
+to anon, authenticated
+using (true)
 with check (true);
 
 drop policy if exists "public delete employees" on public.employees;
@@ -203,6 +362,35 @@ for delete
 to anon, authenticated
 using (true);
 
+drop policy if exists "public read current comments" on public.current_comments;
+create policy "public read current comments"
+on public.current_comments
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "public insert current comments" on public.current_comments;
+create policy "public insert current comments"
+on public.current_comments
+for insert
+to anon, authenticated
+with check (true);
+
+drop policy if exists "public update current comments" on public.current_comments;
+create policy "public update current comments"
+on public.current_comments
+for update
+to anon, authenticated
+using (true)
+with check (true);
+
+drop policy if exists "public delete current comments" on public.current_comments;
+create policy "public delete current comments"
+on public.current_comments
+for delete
+to anon, authenticated
+using (true);
+
 drop policy if exists "public read archived checks" on public.archived_checks;
 create policy "public read archived checks"
 on public.archived_checks
@@ -224,6 +412,30 @@ for delete
 to anon, authenticated
 using (true);
 
+drop policy if exists "public read archived comments" on public.archived_comments;
+create policy "public read archived comments"
+on public.archived_comments
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "public insert archived comments" on public.archived_comments;
+create policy "public insert archived comments"
+on public.archived_comments
+for insert
+to anon, authenticated
+with check (true);
+
+drop policy if exists "public delete archived comments" on public.archived_comments;
+create policy "public delete archived comments"
+on public.archived_comments
+for delete
+to anon, authenticated
+using (true);
+
+create index if not exists idx_employees_sort_order on public.employees (sort_order);
 create index if not exists idx_spaces_sort_order on public.spaces (sort_order);
 create index if not exists idx_current_checks_date_type on public.current_checks (work_date, checklist_type);
+create index if not exists idx_current_comments_date_type on public.current_comments (work_date, checklist_type);
 create index if not exists idx_archived_checks_date_type on public.archived_checks (archive_date, checklist_type);
+create index if not exists idx_archived_comments_date_type on public.archived_comments (archive_date, checklist_type);

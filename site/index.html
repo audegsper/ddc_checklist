@@ -17,6 +17,14 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <div id="app-loading" class="app-loading">
+      <div class="app-loading__card">
+        <div class="app-loading__spinner" aria-hidden="true"></div>
+        <strong>체크리스트를 준비하고 있습니다</strong>
+        <p id="app-loading-text">데이터를 불러오는 중입니다.</p>
+      </div>
+    </div>
+
     <div class="app-shell">
       <header class="hero">
         <div class="hero__eyebrow">Daily Duty Checklist</div>
@@ -26,7 +34,15 @@
             <p id="today-label" class="hero__date"></p>
           </div>
           <div class="hero__meta">
-            <div id="version-pill" class="version-pill">버전 0.8.3</div>
+            <div id="version-pill" class="version-pill">버전 0.9.0</div>
+            <button
+              id="setup-open-button"
+              class="icon-button icon-button--ghost"
+              type="button"
+              aria-label="설정 열기"
+            >
+              &#9881;
+            </button>
           </div>
         </div>
 
@@ -57,7 +73,6 @@
         <nav class="tabs" aria-label="앱 섹션">
           <button class="tab is-active" data-tab="checklist" type="button">체크</button>
           <button class="tab" data-tab="history" type="button">기록</button>
-          <button class="tab" data-tab="setup" type="button">설정</button>
         </nav>
 
         <section class="panel is-active" data-panel="checklist">
@@ -65,19 +80,25 @@
             <div>
               <h2 id="checklist-title">오픈 공간 점검</h2>
               <p id="checklist-description">
-                공간별 확인 여부를 표시하고 필요한 경우 메모를 남길 수 있습니다.
+                공간별 확인 여부와 댓글형 메모를 관리할 수 있습니다.
               </p>
             </div>
           </div>
 
           <div class="summary-card checklist-summary">
             <div class="checklist-switch" role="tablist" aria-label="체크 종류">
-              <button class="hero-tab is-active" data-checklist-type="open" type="button">오픈 체크리스트</button>
-              <button class="hero-tab" data-checklist-type="close" type="button">마감 체크리스트</button>
+              <button class="hero-tab is-active" data-checklist-type="open" type="button">
+                오픈 체크리스트
+              </button>
+              <button class="hero-tab" data-checklist-type="close" type="button">
+                마감 체크리스트
+              </button>
             </div>
             <div class="checklist-summary__meta">
-              <strong id="summary-count">0 / 0 공간 확인 완료</strong>
-              <p id="summary-caption" class="helper-text">미확인 공간이 위에 표시되고, 확인된 공간은 아래로 정렬됩니다.</p>
+              <strong id="summary-count">체크가 필요한 곳 0 · 체크를 완료한 곳 0</strong>
+              <p id="summary-caption" class="helper-text">
+                체크가 필요한 공간과 완료한 공간을 분리해서 보여줍니다.
+              </p>
             </div>
           </div>
 
@@ -88,15 +109,31 @@
           <div class="section-title">
             <div>
               <h2>기록</h2>
-              <p id="history-retention-copy">오후 3시와 자정 자동 기록 결과를 날짜별로 확인합니다.</p>
+              <p id="history-retention-copy">
+                오픈과 마감 결과를 날짜별로 나누어 확인할 수 있습니다.
+              </p>
             </div>
           </div>
 
           <div class="summary-card history-toolbar">
             <div class="calendar-nav">
-              <button id="calendar-prev" class="secondary-button" type="button">이전 달</button>
+              <button
+                id="calendar-prev"
+                class="icon-button icon-button--ghost"
+                type="button"
+                aria-label="이전 달"
+              >
+                &#8249;
+              </button>
               <strong id="calendar-label"></strong>
-              <button id="calendar-next" class="secondary-button" type="button">다음 달</button>
+              <button
+                id="calendar-next"
+                class="icon-button icon-button--ghost"
+                type="button"
+                aria-label="다음 달"
+              >
+                &#8250;
+              </button>
             </div>
             <p id="history-summary" class="helper-text"></p>
           </div>
@@ -105,28 +142,45 @@
           <div id="history-list" class="history-list"></div>
         </section>
 
-        <section class="panel" data-panel="setup">
-          <div class="section-title">
+        <section class="panel panel--setup" data-panel="setup">
+          <div class="section-title section-title--row">
             <div>
               <h2>설정</h2>
-              <p>비밀번호 입력 후 설정과 관리 기능을 사용할 수 있습니다.</p>
+              <p>비밀번호를 입력하면 설정과 관리 기능을 사용할 수 있습니다.</p>
             </div>
+            <button
+              id="setup-close-button"
+              class="icon-button icon-button--ghost"
+              type="button"
+              aria-label="설정 닫기"
+            >
+              &times;
+            </button>
           </div>
 
           <div id="setup-lock-card" class="card stack">
             <h3>설정 잠금 해제</h3>
             <form id="setup-auth-form" class="inline-form">
-              <input id="setup-password" type="password" placeholder="비밀번호 입력" maxlength="40" required />
+              <input
+                id="setup-password"
+                type="password"
+                placeholder="비밀번호 입력"
+                maxlength="40"
+                autocomplete="current-password"
+                required
+              />
               <button type="submit">들어가기</button>
             </form>
-            <p id="setup-auth-help" class="helper-text">초기 비밀번호는 8883입니다.</p>
+            <p id="setup-auth-help" class="helper-text"></p>
           </div>
 
           <div id="setup-content" class="stack is-hidden">
             <div class="card stack">
               <div class="card__title-row">
                 <h3>동작 설정</h3>
-                <button id="setup-lock-button" class="secondary-button" type="button">잠그기</button>
+                <button id="setup-lock-button" class="secondary-button" type="button">
+                  잠그기
+                </button>
               </div>
               <form id="settings-form" class="settings-form stack">
                 <label class="field">
@@ -148,11 +202,23 @@
               <form id="password-form" class="stack">
                 <label class="field">
                   <span class="field__label">현재 비밀번호</span>
-                  <input id="current-password" type="password" maxlength="40" required />
+                  <input
+                    id="current-password"
+                    type="password"
+                    maxlength="40"
+                    autocomplete="current-password"
+                    required
+                  />
                 </label>
                 <label class="field">
                   <span class="field__label">새 비밀번호</span>
-                  <input id="new-password" type="password" maxlength="40" required />
+                  <input
+                    id="new-password"
+                    type="password"
+                    maxlength="40"
+                    autocomplete="new-password"
+                    required
+                  />
                 </label>
                 <button type="submit">비밀번호 변경</button>
               </form>
@@ -161,19 +227,54 @@
             <div class="card stack">
               <h3>직원 관리</h3>
               <form id="employee-form" class="inline-form">
-                <input id="employee-name" type="text" placeholder="예: 김도현" maxlength="30" required />
+                <input
+                  id="employee-name"
+                  type="text"
+                  placeholder="예: 김도현"
+                  maxlength="30"
+                  required
+                />
                 <button type="submit">직원 추가</button>
               </form>
-              <div id="employee-list" class="chip-row"></div>
+              <p class="helper-text">등록된 직원은 드래그해서 순서를 바꿀 수 있습니다.</p>
+              <div id="employee-list" class="manage-list"></div>
             </div>
 
             <div class="card stack">
               <h3>공간 관리</h3>
               <form id="space-form" class="inline-form">
-                <input id="space-name" type="text" placeholder="예: 대기실" maxlength="40" required />
+                <input
+                  id="space-name"
+                  type="text"
+                  placeholder="예: 대기실"
+                  maxlength="40"
+                  required
+                />
                 <button type="submit">공간 추가</button>
               </form>
-              <p class="helper-text">화살표 또는 드래그로 공간 순서를 바꿀 수 있습니다.</p>
+              <div class="manage-toolbar">
+                <div class="manage-toolbar__buttons">
+                  <button
+                    id="space-move-up"
+                    class="icon-button"
+                    type="button"
+                    aria-label="선택한 공간 위로"
+                  >
+                    &#8593;
+                  </button>
+                  <button
+                    id="space-move-down"
+                    class="icon-button"
+                    type="button"
+                    aria-label="선택한 공간 아래로"
+                  >
+                    &#8595;
+                  </button>
+                </div>
+                <p id="manage-space-selection" class="helper-text">
+                  순서를 바꿀 공간을 먼저 선택해 주세요.
+                </p>
+              </div>
               <div id="manage-spaces-list" class="stack"></div>
             </div>
 
@@ -183,7 +284,10 @@
                 <li>`supabase/schema.sql`을 SQL Editor에서 실행합니다.</li>
                 <li>`site/app-config.js`에 `supabaseUrl`, `supabaseAnonKey`를 입력합니다.</li>
                 <li>`useSupabase`를 `true`로 바꾸고 페이지를 새로고침합니다.</li>
-                <li>`site/app-config.js`에 실제 값이 있고 `useSupabase`가 `true`면 keepalive 워크플로가 같은 설정을 읽어 호출합니다.</li>
+                <li>
+                  `site/app-config.js`에 실제 값이 있고 `useSupabase`가 `true`면 keepalive
+                  워크플로가 같은 설정을 읽어 호출합니다.
+                </li>
               </ol>
               <div id="setup-status" class="status-box"></div>
             </div>
@@ -196,36 +300,42 @@
       <article class="space-card">
         <div class="space-card__header">
           <h3 class="space-card__name"></h3>
-          <button class="ghost-button space-card__confirm" data-action="toggle-check">확인</button>
+          <button class="ghost-button ghost-button--compact space-card__confirm" data-action="toggle-check">
+            확인
+          </button>
         </div>
 
-        <div class="space-card__inline-meta">
-          <span class="status-pill" data-role="check-state">미확인</span>
-          <span class="status-pill" data-role="comment-state">메모 없음</span>
-          <span class="helper-text" data-role="owner-state"></span>
-        </div>
+        <p class="helper-text space-card__owner is-hidden" data-role="owner-state"></p>
 
         <details class="space-card__details">
           <summary>
-            세부 보기
+            <span>세부 보기</span>
             <span class="space-card__summary-badges" data-role="summary-badges"></span>
           </summary>
 
           <div class="space-card__details-body">
             <div class="surface">
               <p class="surface__label">체크 항목</p>
-              <p class="space-card__template"></p>
+              <div class="checklist-item-list" data-role="checklist-items"></div>
             </div>
 
             <label class="field">
-              <span class="field__label">특이사항 / 공유 메모</span>
-              <textarea class="space-card__comment" rows="4" placeholder="체크 후 공유할 내용을 적어 주세요."></textarea>
+              <span class="field__label">특이사항 / 공유메모</span>
+              <textarea
+                class="space-card__comment"
+                rows="3"
+                placeholder="메모 저장을 누를 때마다 댓글처럼 등록됩니다."
+              ></textarea>
             </label>
 
             <div class="space-card__actions">
               <button class="secondary-button" data-action="save-comment">메모 저장</button>
-              <button class="secondary-button is-subtle" data-action="clear-comment">메모 지우기</button>
+              <button class="secondary-button is-subtle is-hidden" data-action="cancel-comment">
+                수정 취소
+              </button>
             </div>
+
+            <div class="comment-list" data-role="comment-list"></div>
           </div>
         </details>
       </article>

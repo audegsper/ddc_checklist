@@ -11,7 +11,7 @@ import {
   getWorkDate,
 } from "./utils.js";
 
-const APP_VERSION = "버전 0.8.3";
+const APP_VERSION = "버전 0.9.0";
 const config = window.__APP_CONFIG__ ?? {};
 const APP_TIMEZONE = config.timezone || "Asia/Seoul";
 
@@ -23,17 +23,27 @@ const state = {
   calendarMonth: new Date(),
   repository: null,
   setupUnlocked: false,
-  draggedSpaceId: null,
+  activePanel: "checklist",
+  lastPrimaryPanel: "checklist",
+  selectedManageSpaceId: "",
+  draggedEmployeeId: null,
+  commentDrafts: {},
+  openDetails: {},
+  manageOpenDetails: {},
+  hasBootstrapped: false,
 };
 
 let elements = {};
 
 function initializeElements() {
   elements = {
+    loading: document.getElementById("app-loading"),
+    loadingText: document.getElementById("app-loading-text"),
     title: document.getElementById("app-title"),
     todayLabel: document.getElementById("today-label"),
     versionPill: document.getElementById("version-pill"),
-    employeeCard: document.getElementById("employee-card"),
+    setupOpenButton: document.getElementById("setup-open-button"),
+    setupCloseButton: document.getElementById("setup-close-button"),
     employeeButtons: document.getElementById("employee-buttons"),
     spacesList: document.getElementById("spaces-list"),
     employeeForm: document.getElementById("employee-form"),
@@ -42,6 +52,9 @@ function initializeElements() {
     spaceForm: document.getElementById("space-form"),
     spaceName: document.getElementById("space-name"),
     manageSpacesList: document.getElementById("manage-spaces-list"),
+    manageSpaceSelection: document.getElementById("manage-space-selection"),
+    spaceMoveUp: document.getElementById("space-move-up"),
+    spaceMoveDown: document.getElementById("space-move-down"),
     historyList: document.getElementById("history-list"),
     historySummary: document.getElementById("history-summary"),
     historyRetentionCopy: document.getElementById("history-retention-copy"),
@@ -56,7 +69,7 @@ function initializeElements() {
     template: document.getElementById("space-card-template"),
     tabs: Array.from(document.querySelectorAll(".tab")),
     panels: Array.from(document.querySelectorAll(".panel")),
-    checklistTabs: Array.from(document.querySelectorAll('[data-checklist-type]')),
+    checklistTabs: Array.from(document.querySelectorAll("[data-checklist-type]")),
     checklistTitle: document.getElementById("checklist-title"),
     checklistDescription: document.getElementById("checklist-description"),
     summaryCount: document.getElementById("summary-count"),
@@ -89,6 +102,11 @@ function toggleClass(element, className, enabled) {
   if (element) element.classList.toggle(className, enabled);
 }
 
+function setLoading(visible, text = "데이터를 불러오는 중입니다.") {
+  toggleClass(elements.loading, "is-hidden", !visible);
+  setText(elements.loadingText, text);
+}
+
 function canUseSupabase() {
   return Boolean(config.useSupabase && config.supabaseUrl && config.supabaseAnonKey);
 }
@@ -107,7 +125,7 @@ function isMissingSupabaseTable(error) {
 function buildSupabaseSchemaHelp() {
   return [
     "현재 연결된 Supabase 프로젝트에 필요한 테이블이 없습니다.",
-    "Supabase SQL Editor에서 `supabase/schema.sql` 내용을 실행한 뒤 새로고침해 주세요.",
+    "Supabase SQL Editor에서 `supabase/schema.sql` 내용을 다시 실행한 뒤 새로고침해 주세요.",
     `연결된 프로젝트: ${config.supabaseUrl || "미설정"}`,
   ].join("\n");
 }
@@ -122,7 +140,7 @@ function getSettings() {
   return (
     state.bootstrap?.app_settings ?? {
       history_limit: 10,
-      timezone: "Asia/Seoul",
+      timezone: APP_TIMEZONE,
       show_employee_name: true,
       admin_password: "8883",
     }
@@ -153,12 +171,41 @@ function getCurrentCheck(spaceId, checklistType = state.selectedChecklistType) {
   );
 }
 
+function getCurrentComments(spaceId, checklistType = state.selectedChecklistType) {
+  return (state.bootstrap?.current_comments ?? [])
+    .filter(
+      (item) =>
+        item.space_id === spaceId &&
+        item.checklist_type === checklistType &&
+        item.work_date === getWorkDate(APP_TIMEZONE),
+    )
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+}
+
+function getArchivedComments(archiveDate, checklistType, spaceId) {
+  return (state.bootstrap?.archived_comments ?? [])
+    .filter(
+      (item) =>
+        item.archive_date === archiveDate &&
+        item.checklist_type === checklistType &&
+        item.space_id === spaceId,
+    )
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+}
+
 function getChecklistLabel(type = state.selectedChecklistType) {
   return type === "open" ? "오픈" : "마감";
 }
 
 function getChecklistTemplate(space, type = state.selectedChecklistType) {
   return type === "open" ? space.open_checklist_template : space.close_checklist_template;
+}
+
+function getChecklistItems(space, type = state.selectedChecklistType) {
+  return getChecklistTemplate(space, type)
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function countChecklistStatus(type) {
@@ -171,19 +218,200 @@ function countChecklistStatus(type) {
 }
 
 function sortChecklistSpaces(spaces) {
-  return [...spaces].sort((a, b) => {
-    const aChecked = getCurrentCheck(a.id)?.checked ? 1 : 0;
-    const bChecked = getCurrentCheck(b.id)?.checked ? 1 : 0;
-    if (aChecked !== bChecked) return aChecked - bChecked;
-    return Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0);
+  return [...spaces].sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
+}
+
+function getCommentDraftKey(spaceId, checklistType = state.selectedChecklistType) {
+  return `${checklistType}:${spaceId}`;
+}
+
+function getCommentDraft(spaceId, checklistType = state.selectedChecklistType) {
+  return (
+    state.commentDrafts[getCommentDraftKey(spaceId, checklistType)] ?? {
+      text: "",
+      editingCommentId: null,
+    }
+  );
+}
+
+function setCommentDraft(spaceId, patch, checklistType = state.selectedChecklistType) {
+  const key = getCommentDraftKey(spaceId, checklistType);
+  state.commentDrafts[key] = {
+    ...getCommentDraft(spaceId, checklistType),
+    ...patch,
+  };
+}
+
+function clearCommentDraft(spaceId, checklistType = state.selectedChecklistType) {
+  delete state.commentDrafts[getCommentDraftKey(spaceId, checklistType)];
+}
+
+function getDetailsKey(spaceId, checklistType = state.selectedChecklistType) {
+  return `${checklistType}:${spaceId}`;
+}
+
+function isDetailsOpen(spaceId, checklistType = state.selectedChecklistType) {
+  return Boolean(state.openDetails[getDetailsKey(spaceId, checklistType)]);
+}
+
+function setDetailsOpen(spaceId, open, checklistType = state.selectedChecklistType) {
+  state.openDetails[getDetailsKey(spaceId, checklistType)] = open;
+}
+
+function isManageDetailsOpen(spaceId) {
+  return Boolean(state.manageOpenDetails[spaceId]);
+}
+
+function setManageDetailsOpen(spaceId, open) {
+  state.manageOpenDetails[spaceId] = open;
+}
+
+function buildChecklistPrompt(space, isChecked) {
+  if (isChecked) {
+    return `${space.name} 공간의 확인 완료를 해제할까요?\n\n해제하면 다시 '체크가 필요한 곳'으로 이동합니다.`;
+  }
+
+  const items = getChecklistItems(space, state.selectedChecklistType);
+  const itemLines = items.length
+    ? items.map((item, index) => `${index + 1}. ${item}`).join("\n")
+    : "등록된 체크 항목이 없습니다.";
+
+  return [
+    `${space.name} 공간의 체크 항목입니다.`,
+    "",
+    itemLines,
+    "",
+    "위 항목을 모두 확인했다면 확인을 눌러 주세요.",
+  ].join("\n");
+}
+
+function buildOwnerText(currentCheck) {
+  if (!getSettings().show_employee_name) return "";
+  if (!currentCheck?.employee_name) return "";
+  return `확인 직원: ${currentCheck.employee_name}`;
+}
+
+function buildDetailsBadges(space, comments, checklistType = state.selectedChecklistType) {
+  const badges = [];
+  if (getChecklistItems(space, checklistType).length) {
+    badges.push('<span class="summary-badge">체크항목 있음</span>');
+  }
+  if (comments.length) {
+    badges.push('<span class="summary-badge is-warning">메모 있음</span>');
+  }
+  return badges.join("");
+}
+
+function renderChecklistItemsMarkup(space, checklistType = state.selectedChecklistType) {
+  const items = getChecklistItems(space, checklistType);
+  if (!items.length) {
+    return '<p class="helper-text">등록된 체크 항목이 없습니다.</p>';
+  }
+
+  return `
+    <ul class="checklist-item-list__items">
+      ${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+    </ul>
+  `;
+}
+
+function canEditComment(comment) {
+  return Boolean(state.selectedEmployeeId && comment.employee_id && comment.employee_id === state.selectedEmployeeId);
+}
+
+function renderCurrentCommentsMarkup(comments) {
+  if (!comments.length) {
+    return '<div class="empty-inline">등록된 메모가 없습니다.</div>';
+  }
+
+  return comments
+    .map((comment) => {
+      const actions = canEditComment(comment)
+        ? `
+            <div class="comment-item__actions">
+              <button class="tiny-button" data-action="edit-comment" data-comment-id="${escapeHtml(comment.id)}" type="button">수정</button>
+              <button class="tiny-button is-danger" data-action="delete-comment" data-comment-id="${escapeHtml(comment.id)}" type="button">삭제</button>
+            </div>
+          `
+        : "";
+
+      return `
+        <article class="comment-item">
+          <div class="comment-item__top">
+            <strong>${escapeHtml(comment.employee_name || "이름 없음")}</strong>
+            <span class="helper-text">${escapeHtml(formatKoreanDateTime(comment.updated_at, APP_TIMEZONE))}</span>
+          </div>
+          <p class="comment-item__body">${escapeHtml(comment.content)}</p>
+          ${actions}
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderHistoryCommentsMarkup(comments) {
+  if (!comments.length) {
+    return '<div class="empty-inline">등록된 메모가 없습니다.</div>';
+  }
+
+  return comments
+    .map(
+      (comment) => `
+        <article class="comment-item is-history">
+          <div class="comment-item__top">
+            <strong>${escapeHtml(comment.employee_name || "이름 없음")}</strong>
+            <span class="helper-text">${escapeHtml(formatKoreanDateTime(comment.updated_at ?? comment.archived_at, APP_TIMEZONE))}</span>
+          </div>
+          <p class="comment-item__body">${escapeHtml(comment.content)}</p>
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function measurePositions(container, selector, attributeName) {
+  if (!container) return new Map();
+  return new Map(
+    Array.from(container.querySelectorAll(selector)).map((element) => [
+      element.dataset[attributeName],
+      element.getBoundingClientRect(),
+    ]),
+  );
+}
+
+async function animateListReorder(container, selector, attributeName, action) {
+  const first = measurePositions(container, selector, attributeName);
+  await action();
+  const elementsToAnimate = Array.from(container?.querySelectorAll(selector) ?? []);
+  elementsToAnimate.forEach((element) => {
+    const key = element.dataset[attributeName];
+    const previous = first.get(key);
+    if (!previous) return;
+    const next = element.getBoundingClientRect();
+    const deltaX = previous.left - next.left;
+    const deltaY = previous.top - next.top;
+    if (!deltaX && !deltaY) return;
+    element.animate(
+      [
+        { transform: `translate(${deltaX}px, ${deltaY}px)` },
+        { transform: "translate(0, 0)" },
+      ],
+      { duration: 220, easing: "ease" },
+    );
   });
 }
 
 async function refresh() {
   state.bootstrap = await state.repository.getBootstrap();
+
   const activeEmployees = state.bootstrap.employees ?? [];
   if (!activeEmployees.some((item) => item.id === state.selectedEmployeeId)) {
-    state.selectedEmployeeId = activeEmployees[0]?.id ?? "";
+    state.selectedEmployeeId = "";
+  }
+
+  const activeSpaces = state.bootstrap.spaces ?? [];
+  if (!activeSpaces.some((item) => item.id === state.selectedManageSpaceId)) {
+    state.selectedManageSpaceId = "";
   }
 
   renderHeader();
@@ -195,6 +423,9 @@ async function refresh() {
   renderHistory();
   renderSettings();
   renderSetupAccess();
+  activatePanel(state.activePanel);
+  state.hasBootstrapped = true;
+  setLoading(false);
 }
 
 function renderHeader() {
@@ -229,8 +460,8 @@ function renderChecklistTabs() {
   setText(
     elements.checklistDescription,
     state.selectedChecklistType === "open"
-      ? "오픈 준비에 필요한 공간별 확인 여부와 메모를 관리합니다."
-      : "마감 확인에 필요한 공간별 상태와 메모를 관리합니다.",
+      ? "오픈 준비에 필요한 공간별 확인 여부와 댓글형 메모를 관리합니다."
+      : "마감 확인에 필요한 공간별 상태와 댓글형 메모를 관리합니다.",
   );
 
   elements.checklistTabs.forEach((button) => {
@@ -267,8 +498,10 @@ function renderEmployees() {
 
   Array.from(elements.employeeButtons?.querySelectorAll("[data-employee-id]") ?? []).forEach((button) => {
     button.addEventListener("click", () => {
-      state.selectedEmployeeId = button.dataset.employeeId ?? "";
+      const employeeId = button.dataset.employeeId ?? "";
+      state.selectedEmployeeId = state.selectedEmployeeId === employeeId ? "" : employeeId;
       renderEmployees();
+      renderSpaces();
     });
   });
 }
@@ -278,25 +511,213 @@ function renderChecklistSummary() {
   const checkedCount = spaces.filter((space) => getCurrentCheck(space.id)?.checked).length;
   const uncheckedCount = Math.max(spaces.length - checkedCount, 0);
 
-  setText(elements.summaryCount, `확인 ${checkedCount} · 미확인 ${uncheckedCount}`);
-  setText(elements.summaryCaption, "미확인된 공간은 위에 유지되고, 확인된 공간은 아래로 정렬됩니다.");
+  setText(elements.summaryCount, `체크가 필요한 곳 ${uncheckedCount} · 체크를 완료한 곳 ${checkedCount}`);
+  setText(elements.summaryCaption, "메모는 세부 보기 안에서 댓글처럼 계속 등록됩니다.");
 }
 
-function buildOwnerText(currentCheck) {
-  const showName = Boolean(getSettings().show_employee_name);
-  if (currentCheck?.comment?.trim() && currentCheck?.comment_employee_name) {
-    return `메모 작성: ${currentCheck.comment_employee_name}`;
+function buildSpaceCard(space) {
+  const currentCheck = getCurrentCheck(space.id);
+  const comments = getCurrentComments(space.id);
+  const draft = getCommentDraft(space.id);
+  const fragment = elements.template.content.cloneNode(true);
+  const card = fragment.querySelector(".space-card");
+  const name = fragment.querySelector(".space-card__name");
+  const confirmButton = fragment.querySelector('[data-action="toggle-check"]');
+  const ownerState = fragment.querySelector('[data-role="owner-state"]');
+  const details = fragment.querySelector(".space-card__details");
+  const checklistItems = fragment.querySelector('[data-role="checklist-items"]');
+  const summaryBadges = fragment.querySelector('[data-role="summary-badges"]');
+  const commentInput = fragment.querySelector(".space-card__comment");
+  const saveCommentButton = fragment.querySelector('[data-action="save-comment"]');
+  const cancelCommentButton = fragment.querySelector('[data-action="cancel-comment"]');
+  const commentList = fragment.querySelector('[data-role="comment-list"]');
+  const isChecked = Boolean(currentCheck?.checked);
+  const ownerText = buildOwnerText(currentCheck);
+
+  card.dataset.spaceId = space.id;
+  toggleClass(card, "is-checked", isChecked);
+
+  setText(name, space.name);
+  setText(confirmButton, isChecked ? "완료" : "확인");
+  toggleClass(confirmButton, "is-complete", isChecked);
+
+  setText(ownerState, ownerText);
+  toggleClass(ownerState, "is-hidden", !ownerText);
+
+  setHtml(checklistItems, renderChecklistItemsMarkup(space));
+  setHtml(summaryBadges, buildDetailsBadges(space, comments));
+  setHtml(commentList, renderCurrentCommentsMarkup(comments));
+  commentInput.value = draft.text ?? "";
+  setText(saveCommentButton, draft.editingCommentId ? "수정 저장" : "메모 저장");
+  toggleClass(cancelCommentButton, "is-hidden", !draft.editingCommentId);
+
+  details.open = isDetailsOpen(space.id);
+  details.addEventListener("toggle", () => {
+    setDetailsOpen(space.id, details.open);
+  });
+
+  commentInput.addEventListener("input", (event) => {
+    setCommentDraft(space.id, { text: event.target.value });
+  });
+
+  confirmButton.addEventListener("click", async () => {
+    try {
+      if (!isChecked && !getSelectedEmployee()) {
+        window.alert("담당 직원을 먼저 선택해 주세요.");
+        return;
+      }
+
+      const confirmed = window.confirm(buildChecklistPrompt(space, isChecked));
+      if (!confirmed) return;
+
+      confirmButton.disabled = true;
+      if (isChecked) {
+        await state.repository.saveCurrentCheck({
+          checklist_type: state.selectedChecklistType,
+          space_id: space.id,
+          space_name: space.name,
+          checked: false,
+          employee_id: null,
+          employee_name: "",
+        });
+      } else {
+        const employee = getSelectedEmployee();
+        await state.repository.saveCurrentCheck({
+          checklist_type: state.selectedChecklistType,
+          space_id: space.id,
+          space_name: space.name,
+          checked: true,
+          employee_id: employee.id,
+          employee_name: employee.name,
+        });
+      }
+      await refresh();
+    } catch (error) {
+      if (isMissingSupabaseTable(error)) {
+        showSchemaHelp(error);
+        return;
+      }
+      window.alert(`확인 상태 저장에 실패했습니다.\n${getErrorMessage(error)}`);
+    } finally {
+      confirmButton.disabled = false;
+    }
+  });
+
+  saveCommentButton.addEventListener("click", async () => {
+    try {
+      const draftState = getCommentDraft(space.id);
+      const content = draftState.text.trim();
+      if (!content) {
+        window.alert("메모 내용을 입력해 주세요.");
+        return;
+      }
+
+      const employee = getSelectedEmployee();
+      if (!employee) {
+        window.alert("담당 직원을 먼저 선택해 주세요.");
+        return;
+      }
+
+      saveCommentButton.disabled = true;
+      if (draftState.editingCommentId) {
+        await state.repository.updateCurrentComment({
+          commentId: draftState.editingCommentId,
+          content,
+        });
+      } else {
+        await state.repository.addCurrentComment({
+          checklist_type: state.selectedChecklistType,
+          space_id: space.id,
+          space_name: space.name,
+          employee_id: employee.id,
+          employee_name: employee.name,
+          content,
+        });
+      }
+      clearCommentDraft(space.id);
+      setDetailsOpen(space.id, true);
+      await refresh();
+    } catch (error) {
+      if (isMissingSupabaseTable(error)) {
+        showSchemaHelp(error);
+        return;
+      }
+      window.alert(`메모 저장에 실패했습니다.\n${getErrorMessage(error)}`);
+    } finally {
+      saveCommentButton.disabled = false;
+    }
+  });
+
+  cancelCommentButton.addEventListener("click", () => {
+    clearCommentDraft(space.id);
+    setDetailsOpen(space.id, true);
+    renderSpaces();
+  });
+
+  Array.from(commentList.querySelectorAll('[data-action="edit-comment"]')).forEach((button) => {
+    button.addEventListener("click", () => {
+      const commentId = button.dataset.commentId;
+      const comment = comments.find((item) => item.id === commentId);
+      if (!comment || !canEditComment(comment)) return;
+      setCommentDraft(space.id, {
+        text: comment.content,
+        editingCommentId: comment.id,
+      });
+      setDetailsOpen(space.id, true);
+      renderSpaces();
+    });
+  });
+
+  Array.from(commentList.querySelectorAll('[data-action="delete-comment"]')).forEach((button) => {
+    button.addEventListener("click", async () => {
+      const commentId = button.dataset.commentId;
+      const comment = comments.find((item) => item.id === commentId);
+      if (!comment || !canEditComment(comment)) return;
+
+      const confirmed = window.confirm("이 메모를 삭제할까요?");
+      if (!confirmed) return;
+
+      try {
+        await state.repository.deleteCurrentComment({ commentId });
+        if (getCommentDraft(space.id).editingCommentId === commentId) {
+          clearCommentDraft(space.id);
+        }
+        setDetailsOpen(space.id, true);
+        await refresh();
+      } catch (error) {
+        if (isMissingSupabaseTable(error)) {
+          showSchemaHelp(error);
+          return;
+        }
+        window.alert(`메모 삭제에 실패했습니다.\n${getErrorMessage(error)}`);
+      }
+    });
+  });
+
+  return card;
+}
+
+function renderSpaceGroup(title, spaces, emptyMessage) {
+  const section = document.createElement("section");
+  section.className = "space-group";
+
+  const header = document.createElement("div");
+  header.className = "space-group__header";
+  header.innerHTML = `
+    <h3>${escapeHtml(title)}</h3>
+    <span class="space-group__count">${spaces.length}</span>
+  `;
+  section.append(header);
+
+  const body = document.createElement("div");
+  body.className = "stack";
+  if (!spaces.length) {
+    body.innerHTML = `<div class="empty-state">${escapeHtml(emptyMessage)}</div>`;
+  } else {
+    spaces.forEach((space) => body.append(buildSpaceCard(space)));
   }
-  if (!showName) return "";
-  if (!currentCheck?.employee_name) return "";
-  return `확인 직원: ${currentCheck.employee_name}`;
-}
-
-function buildDetailsBadges(currentCheck, templateText) {
-  const badges = [];
-  if ((templateText ?? "").trim()) badges.push('<span class="summary-badge">체크항목 있음</span>');
-  if ((currentCheck?.comment ?? "").trim()) badges.push('<span class="summary-badge is-warning">메모 있음</span>');
-  return badges.join("");
+  section.append(body);
+  return section;
 }
 
 function renderSpaces() {
@@ -308,122 +729,100 @@ function renderSpaces() {
     return;
   }
 
-  spaces.forEach((space) => {
-    const currentCheck = getCurrentCheck(space.id);
-    const rawTemplateText = getChecklistTemplate(space)?.trim() ?? "";
-    const templateText = rawTemplateText || "아직 등록된 체크 항목이 없습니다.";
-    const fragment = elements.template.content.cloneNode(true);
-    const card = fragment.querySelector(".space-card");
-    const name = fragment.querySelector(".space-card__name");
-    const confirmButton = fragment.querySelector('[data-action="toggle-check"]');
-    const template = fragment.querySelector(".space-card__template");
-    const commentInput = fragment.querySelector(".space-card__comment");
-    const saveCommentButton = fragment.querySelector('[data-action="save-comment"]');
-    const clearCommentButton = fragment.querySelector('[data-action="clear-comment"]');
-    const checkState = fragment.querySelector('[data-role="check-state"]');
-    const commentState = fragment.querySelector('[data-role="comment-state"]');
-    const ownerState = fragment.querySelector('[data-role="owner-state"]');
-    const summaryBadges = fragment.querySelector('[data-role="summary-badges"]');
+  const pending = spaces.filter((space) => !getCurrentCheck(space.id)?.checked);
+  const completed = spaces.filter((space) => getCurrentCheck(space.id)?.checked);
 
-    const hasComment = Boolean(currentCheck?.comment?.trim());
-    const isChecked = Boolean(currentCheck?.checked);
+  elements.spacesList?.append(
+    renderSpaceGroup("체크가 필요한 곳", pending, "아직 확인이 필요한 공간이 없습니다."),
+  );
+  elements.spacesList?.append(
+    renderSpaceGroup("체크를 완료한 곳", completed, "아직 완료된 공간이 없습니다."),
+  );
+}
 
-    setText(name, space.name);
-    setText(template, templateText);
-    commentInput.value = currentCheck?.comment ?? "";
-    summaryBadges.innerHTML = buildDetailsBadges(currentCheck, rawTemplateText);
+function renderEmployeeManager() {
+  const employees = state.bootstrap?.employees ?? [];
+  if (!employees.length) {
+    setHtml(elements.employeeList, '<div class="empty-state">아직 등록된 직원이 없습니다.</div>');
+    return;
+  }
 
-    toggleClass(card, "is-checked", isChecked);
-    toggleClass(card, "has-comment", hasComment);
+  setHtml(
+    elements.employeeList,
+    employees
+      .map(
+        (employee) => `
+          <article class="manage-item" data-employee-id="${escapeHtml(employee.id)}" draggable="true">
+            <div class="manage-item__label">
+              <span class="manage-item__handle">&#8942;&#8942;</span>
+              <strong>${escapeHtml(employee.name)}</strong>
+            </div>
+            <button class="tiny-button is-danger" data-delete-employee="${escapeHtml(employee.id)}" type="button">삭제</button>
+          </article>
+        `,
+      )
+      .join(""),
+  );
 
-    setText(confirmButton, isChecked ? "확인 완료" : "확인");
-    toggleClass(confirmButton, "is-complete", isChecked);
-
-    setText(checkState, isChecked ? "확인됨" : "미확인");
-    toggleClass(checkState, "is-warning", !isChecked);
-    setText(commentState, hasComment ? "메모 있음" : "메모 없음");
-    toggleClass(commentState, "is-warning", hasComment);
-    setText(ownerState, buildOwnerText(currentCheck));
-
-    confirmButton.addEventListener("click", async () => {
+  Array.from(elements.employeeList?.querySelectorAll("[data-delete-employee]") ?? []).forEach((button) => {
+    button.addEventListener("click", async () => {
+      const employeeId = button.dataset.deleteEmployee;
+      const employee = employees.find((item) => item.id === employeeId);
+      const confirmed = window.confirm(`${employee?.name ?? "이 직원"}을(를) 삭제하시겠습니까?`);
+      if (!confirmed) return;
       try {
-        const employee = getSelectedEmployee();
-        if (!employee) {
-          window.alert("먼저 직원을 선택해 주세요.");
-          return;
-        }
-
-        confirmButton.disabled = true;
-        await state.repository.saveCurrentCheck({
-          checklist_type: state.selectedChecklistType,
-          space_id: space.id,
-          space_name: space.name,
-          checked: !isChecked,
-          employee_id: employee.id,
-          employee_name: employee.name,
-        });
+        await state.repository.deleteEmployee(employeeId);
+        if (state.selectedEmployeeId === employeeId) state.selectedEmployeeId = "";
         await refresh();
       } catch (error) {
-        if (isMissingSupabaseTable(error)) {
-          showSchemaHelp(error);
-          return;
-        }
-        window.alert(`확인 상태 저장에 실패했습니다.\n${getErrorMessage(error)}`);
-      } finally {
-        confirmButton.disabled = false;
+        window.alert(`직원 삭제에 실패했습니다.\n${getErrorMessage(error)}`);
       }
     });
+  });
 
-    saveCommentButton.addEventListener("click", async () => {
+  Array.from(elements.employeeList?.querySelectorAll("[data-employee-id]") ?? []).forEach((item) => {
+    item.addEventListener("dragstart", () => {
+      state.draggedEmployeeId = item.dataset.employeeId ?? null;
+      item.classList.add("is-dragging");
+    });
+
+    item.addEventListener("dragend", () => {
+      state.draggedEmployeeId = null;
+      item.classList.remove("is-dragging");
+    });
+
+    item.addEventListener("dragover", (event) => {
+      event.preventDefault();
+    });
+
+    item.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      const targetId = item.dataset.employeeId ?? "";
+      if (!state.draggedEmployeeId || state.draggedEmployeeId === targetId) return;
+
+      const currentIds = employees.map((employee) => employee.id);
+      const fromIndex = currentIds.indexOf(state.draggedEmployeeId);
+      const toIndex = currentIds.indexOf(targetId);
+      if (fromIndex < 0 || toIndex < 0) return;
+
+      const nextIds = [...currentIds];
+      const [moved] = nextIds.splice(fromIndex, 1);
+      nextIds.splice(toIndex, 0, moved);
+
       try {
-        const memo = commentInput.value.trim();
-        const employee = getSelectedEmployee();
-        if (!employee) {
-          window.alert("먼저 직원을 선택해 주세요.");
-          return;
-        }
-
-        saveCommentButton.disabled = true;
-        await state.repository.saveCurrentCheck({
-          checklist_type: state.selectedChecklistType,
-          space_id: space.id,
-          space_name: space.name,
-          comment: memo,
-          comment_employee_id: employee.id,
-          comment_employee_name: employee.name,
-        });
-        await refresh();
+        await animateListReorder(
+          elements.employeeList,
+          "[data-employee-id]",
+          "employeeId",
+          async () => {
+            await state.repository.saveEmployeeOrder(nextIds);
+            await refresh();
+          },
+        );
       } catch (error) {
-        if (isMissingSupabaseTable(error)) {
-          showSchemaHelp(error);
-          return;
-        }
-        window.alert(`메모 저장에 실패했습니다.\n${getErrorMessage(error)}`);
-      } finally {
-        saveCommentButton.disabled = false;
+        window.alert(`직원 순서 변경에 실패했습니다.\n${getErrorMessage(error)}`);
       }
     });
-
-    clearCommentButton.addEventListener("click", async () => {
-      try {
-        clearCommentButton.disabled = true;
-        await state.repository.clearCurrentComment({
-          checklistType: state.selectedChecklistType,
-          spaceId: space.id,
-        });
-        await refresh();
-      } catch (error) {
-        if (isMissingSupabaseTable(error)) {
-          showSchemaHelp(error);
-          return;
-        }
-        window.alert(`메모 삭제에 실패했습니다.\n${getErrorMessage(error)}`);
-      } finally {
-        clearCommentButton.disabled = false;
-      }
-    });
-
-    if (elements.spacesList) elements.spacesList.append(card);
   });
 }
 
@@ -433,33 +832,38 @@ function renderManageSpaces() {
 
   if (!spaces.length) {
     setHtml(elements.manageSpacesList, '<div class="empty-state">공간을 추가하면 이곳에서 관리할 수 있습니다.</div>');
+    setText(elements.manageSpaceSelection, "순서를 바꿀 공간을 먼저 선택해 주세요.");
+    if (elements.spaceMoveUp) elements.spaceMoveUp.disabled = true;
+    if (elements.spaceMoveDown) elements.spaceMoveDown.disabled = true;
     return;
   }
 
-  spaces.forEach((space, index) => {
+  const selectedIndex = spaces.findIndex((space) => space.id === state.selectedManageSpaceId);
+  const selectedSpace = spaces[selectedIndex] ?? null;
+  setText(
+    elements.manageSpaceSelection,
+    selectedSpace
+      ? `${selectedSpace.name} 공간이 선택되었습니다. 위아래 화살표로 순서를 바꿀 수 있습니다.`
+      : "순서를 바꿀 공간을 먼저 선택해 주세요.",
+  );
+  if (elements.spaceMoveUp) elements.spaceMoveUp.disabled = selectedIndex <= 0;
+  if (elements.spaceMoveDown) elements.spaceMoveDown.disabled = selectedIndex < 0 || selectedIndex >= spaces.length - 1;
+
+  spaces.forEach((space) => {
     const wrapper = document.createElement("article");
     wrapper.className = "manage-space-card";
-    wrapper.draggable = true;
     wrapper.dataset.spaceId = space.id;
+    toggleClass(wrapper, "is-selected", space.id === state.selectedManageSpaceId);
+
     wrapper.innerHTML = `
       <div class="manage-space-card__summary-row">
-        <div>
-          <div class="manage-space-card__summary">공간</div>
-          <h4>${escapeHtml(space.name)}</h4>
-        </div>
-        <button class="secondary-button is-danger" data-role="delete-space" type="button">삭제</button>
-      </div>
-      <div class="manage-space-card__row">
-        <span class="chip">순서 ${index + 1}</span>
-        <div class="manage-space-card__order">
-          <button class="icon-button" data-role="move-up" type="button" ${index === 0 ? "disabled" : ""}>↑</button>
-          <button class="icon-button" data-role="move-down" type="button" ${index === spaces.length - 1 ? "disabled" : ""}>↓</button>
-        </div>
+        <h4>${escapeHtml(space.name)}</h4>
+        <button class="tiny-button is-danger" data-role="delete-space" type="button">삭제</button>
       </div>
       <details>
         <summary>
           체크 항목 편집
-          <span class="summary-badge">${space.open_checklist_template?.trim() || space.close_checklist_template?.trim() ? "입력됨" : "비어 있음"}</span>
+          <span class="summary-badge">${getChecklistItems(space, "open").length || getChecklistItems(space, "close").length ? "입력됨" : "비어 있음"}</span>
         </summary>
         <div class="manage-space-card__details-body">
           <label class="field">
@@ -480,9 +884,19 @@ function renderManageSpaces() {
     const openInput = wrapper.querySelector('[data-role="open-template"]');
     const closeInput = wrapper.querySelector('[data-role="close-template"]');
     const saveButton = wrapper.querySelector('[data-role="save-space"]');
-    const moveUp = wrapper.querySelector('[data-role="move-up"]');
-    const moveDown = wrapper.querySelector('[data-role="move-down"]');
     const deleteButton = wrapper.querySelector('[data-role="delete-space"]');
+    const details = wrapper.querySelector("details");
+
+    details.open = isManageDetailsOpen(space.id);
+    details.addEventListener("toggle", () => {
+      setManageDetailsOpen(space.id, details.open);
+    });
+
+    wrapper.addEventListener("click", (event) => {
+      if (event.target.closest("textarea")) return;
+      state.selectedManageSpaceId = space.id;
+      renderManageSpaces();
+    });
 
     saveButton.addEventListener("click", async () => {
       try {
@@ -491,6 +905,7 @@ function renderManageSpaces() {
           open_checklist_template: openInput.value.trim(),
           close_checklist_template: closeInput.value.trim(),
         });
+        setManageDetailsOpen(space.id, true);
         await refresh();
       } catch (error) {
         window.alert(`공간 설정 저장에 실패했습니다.\n${getErrorMessage(error)}`);
@@ -499,72 +914,66 @@ function renderManageSpaces() {
       }
     });
 
-    moveUp.addEventListener("click", async () => {
-      try {
-        await state.repository.reorderSpace(space.id, "up");
-        await refresh();
-      } catch (error) {
-        window.alert(`공간 순서 변경에 실패했습니다.\n${getErrorMessage(error)}`);
-      }
-    });
-
-    moveDown.addEventListener("click", async () => {
-      try {
-        await state.repository.reorderSpace(space.id, "down");
-        await refresh();
-      } catch (error) {
-        window.alert(`공간 순서 변경에 실패했습니다.\n${getErrorMessage(error)}`);
-      }
-    });
-
-    deleteButton.addEventListener("click", async () => {
+    deleteButton.addEventListener("click", async (event) => {
+      event.stopPropagation();
       const confirmed = window.confirm(`${space.name} 공간을 삭제하시겠습니까?`);
       if (!confirmed) return;
       try {
         await state.repository.deleteSpace(space.id);
+        if (state.selectedManageSpaceId === space.id) state.selectedManageSpaceId = "";
         await refresh();
       } catch (error) {
         window.alert(`공간 삭제에 실패했습니다.\n${getErrorMessage(error)}`);
       }
     });
 
-    wrapper.addEventListener("dragstart", () => {
-      state.draggedSpaceId = space.id;
-      wrapper.classList.add("is-dragging");
-    });
-
-    wrapper.addEventListener("dragend", () => {
-      state.draggedSpaceId = null;
-      wrapper.classList.remove("is-dragging");
-    });
-
-    wrapper.addEventListener("dragover", (event) => {
-      event.preventDefault();
-    });
-
-    wrapper.addEventListener("drop", async (event) => {
-      event.preventDefault();
-      if (!state.draggedSpaceId || state.draggedSpaceId === space.id) return;
-
-      const currentIds = spaces.map((item) => item.id);
-      const fromIndex = currentIds.indexOf(state.draggedSpaceId);
-      const toIndex = currentIds.indexOf(space.id);
-      if (fromIndex < 0 || toIndex < 0) return;
-
-      const nextIds = [...currentIds];
-      const [moved] = nextIds.splice(fromIndex, 1);
-      nextIds.splice(toIndex, 0, moved);
-
-      try {
-        await state.repository.saveSpaceOrder(nextIds);
-        await refresh();
-      } catch (error) {
-        window.alert(`공간 순서 드래그 저장에 실패했습니다.\n${getErrorMessage(error)}`);
-      }
-    });
-
-    if (elements.manageSpacesList) elements.manageSpacesList.append(wrapper);
+    elements.manageSpacesList?.append(wrapper);
   });
+}
+
+function buildHistoryItemMarkup(entry, comments) {
+  const ownerText =
+    getSettings().show_employee_name && entry.employee_name
+      ? ` · 확인 ${escapeHtml(entry.employee_name)}`
+      : "";
+
+  return `
+    <article class="history-item">
+      <div class="history-item__top">
+        <h4>${escapeHtml(entry.space_name)}</h4>
+        <span class="history-badge" data-kind="${entry.checked ? "checked" : "unchecked"}">
+          ${entry.checked ? "확인 완료" : "미확인"}
+        </span>
+      </div>
+      <p class="history-item__meta">
+        ${entry.checked ? "확인 완료" : "미확인"}${ownerText} · ${escapeHtml(formatKoreanDateTime(entry.archived_at, APP_TIMEZONE))}
+      </p>
+      <div class="history-comments">
+        <strong class="history-comments__title">메모</strong>
+        ${renderHistoryCommentsMarkup(comments)}
+      </div>
+    </article>
+  `;
+}
+
+function buildHistoryGroupMarkup(title, entries, archiveDate, checklistType) {
+  const body = entries.length
+    ? entries
+        .map((entry) => buildHistoryItemMarkup(entry, getArchivedComments(archiveDate, checklistType, entry.space_id)))
+        .join("")
+    : '<div class="empty-state">기록이 없습니다.</div>';
+
+  return `
+    <section class="history-group">
+      <div class="history-group__header">
+        <h3>${escapeHtml(title)}</h3>
+        <span class="space-group__count">${entries.length}</span>
+      </div>
+      <div class="stack">
+        ${body}
+      </div>
+    </section>
+  `;
 }
 
 function renderHistory() {
@@ -580,8 +989,14 @@ function renderHistory() {
   });
 
   setText(elements.calendarLabel, formatYearMonth(state.calendarMonth));
-  setText(elements.historySummary, `보관 중인 날짜 수: ${[...new Set(archives.map((item) => item.archive_date))].length}일`);
-  setText(elements.historyRetentionCopy, `오후 3시 오픈, 자정 마감 결과가 자동 기록됩니다. 현재 설정은 최근 ${retention}일 보관입니다.`);
+  setText(
+    elements.historySummary,
+    `선택한 날짜: ${state.selectedDate} · 보관 중 ${[...new Set(archives.map((item) => item.archive_date))].length}일`,
+  );
+  setText(
+    elements.historyRetentionCopy,
+    `오후 3시 오픈, 자정 마감 결과가 자동 기록됩니다. 현재 설정은 최근 ${retention}일 보관입니다.`,
+  );
 
   setHtml(
     elements.calendarGrid,
@@ -618,89 +1033,26 @@ function renderHistory() {
     });
   });
 
-  const selectedEntries = (archiveMap.get(state.selectedDate) ?? []).sort((a, b) => {
-    if (a.checklist_type === b.checklist_type) return Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0);
-    return a.checklist_type === "open" ? -1 : 1;
-  });
-
-  if (!selectedEntries.length) {
-    setHtml(elements.historyList, `<div class="empty-state">${state.selectedDate} 기록이 없습니다.</div>`);
-    return;
-  }
+  const selectedEntries = (archiveMap.get(state.selectedDate) ?? []).sort(
+    (a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0),
+  );
+  const openEntries = selectedEntries.filter((item) => item.checklist_type === "open");
+  const closeEntries = selectedEntries.filter((item) => item.checklist_type === "close");
 
   setHtml(
     elements.historyList,
-    selectedEntries
-      .map((item) => {
-        const commentText = item.comment?.trim() ? item.comment : "메모 없음";
-        const ownerText =
-          item.comment?.trim() && item.comment_employee_name
-            ? `메모 작성 ${escapeHtml(item.comment_employee_name)} · `
-            : getSettings().show_employee_name && item.employee_name
-              ? `확인 ${escapeHtml(item.employee_name)} · `
-              : "";
-
-        return `
-          <article class="history-item">
-            <div class="history-item__top">
-              <h4>${escapeHtml(item.space_name)}</h4>
-              <span class="history-badge" data-kind="${escapeHtml(item.checklist_type)}">
-                ${item.checklist_type === "open" ? "오픈" : "마감"}
-              </span>
-            </div>
-            <p class="history-item__meta">
-              ${item.checked ? "확인 완료" : "미확인"} · ${ownerText}${formatKoreanDateTime(item.archived_at, APP_TIMEZONE)}
-            </p>
-            <p class="history-item__body">${escapeHtml(commentText)}</p>
-          </article>
-        `;
-      })
-      .join(""),
+    [
+      buildHistoryGroupMarkup("오픈 기록", openEntries, state.selectedDate, "open"),
+      buildHistoryGroupMarkup("마감 기록", closeEntries, state.selectedDate, "close"),
+    ].join(""),
   );
-}
-
-function renderEmployeeChips() {
-  const employees = state.bootstrap?.employees ?? [];
-  if (!employees.length) {
-    setHtml(elements.employeeList, '<div class="empty-state">아직 등록된 직원이 없습니다.</div>');
-    return;
-  }
-
-  setHtml(
-    elements.employeeList,
-    employees
-      .map(
-        (employee) => `
-          <span class="chip chip--removable">
-            <span>${escapeHtml(employee.name)}</span>
-            <button class="chip__remove" data-delete-employee="${escapeHtml(employee.id)}" type="button">X</button>
-          </span>
-        `,
-      )
-      .join(""),
-  );
-
-  Array.from(elements.employeeList?.querySelectorAll("[data-delete-employee]") ?? []).forEach((button) => {
-    button.addEventListener("click", async () => {
-      const employeeId = button.dataset.deleteEmployee;
-      const employee = employees.find((item) => item.id === employeeId);
-      const confirmed = window.confirm(`${employee?.name ?? "이 직원"}을(를) 삭제하시겠습니까?`);
-      if (!confirmed) return;
-      try {
-        await state.repository.deleteEmployee(employeeId);
-        await refresh();
-      } catch (error) {
-        window.alert(`직원 삭제에 실패했습니다.\n${getErrorMessage(error)}`);
-      }
-    });
-  });
 }
 
 function renderSettings() {
   const settings = getSettings();
   if (elements.historyLimit) elements.historyLimit.value = String(settings.history_limit ?? 10);
   if (elements.showEmployeeToggle) elements.showEmployeeToggle.checked = Boolean(settings.show_employee_name);
-  renderEmployeeChips();
+  renderEmployeeManager();
   renderManageSpaces();
 }
 
@@ -709,13 +1061,46 @@ function renderSetupAccess() {
   toggleClass(elements.setupContent, "is-hidden", !state.setupUnlocked);
   setText(
     elements.setupAuthHelp,
-    state.setupUnlocked ? "설정이 잠금 해제되었습니다." : "초기 비밀번호는 8883입니다.",
+    state.setupUnlocked ? "설정이 열려 있습니다." : "비밀번호를 입력하면 설정을 열 수 있습니다.",
   );
 }
 
 function activatePanel(name) {
+  state.activePanel = name;
+  if (name !== "setup") state.lastPrimaryPanel = name;
+
   elements.tabs.forEach((item) => item.classList.toggle("is-active", item.dataset.tab === name));
   elements.panels.forEach((panel) => panel.classList.toggle("is-active", panel.dataset.panel === name));
+  toggleClass(elements.setupOpenButton, "is-active", name === "setup");
+}
+
+function openSetup() {
+  activatePanel("setup");
+}
+
+function closeSetup() {
+  activatePanel(state.lastPrimaryPanel || "checklist");
+}
+
+async function moveSelectedSpace(direction) {
+  if (!state.selectedManageSpaceId) {
+    window.alert("순서를 바꿀 공간을 먼저 선택해 주세요.");
+    return;
+  }
+
+  try {
+    await animateListReorder(
+      elements.manageSpacesList,
+      "[data-space-id]",
+      "spaceId",
+      async () => {
+        await state.repository.reorderSpace(state.selectedManageSpaceId, direction);
+        await refresh();
+      },
+    );
+  } catch (error) {
+    window.alert(`공간 순서 변경에 실패했습니다.\n${getErrorMessage(error)}`);
+  }
 }
 
 function bindTabs() {
@@ -756,6 +1141,9 @@ function bindTabs() {
 }
 
 function bindForms() {
+  elements.setupOpenButton?.addEventListener("click", openSetup);
+  elements.setupCloseButton?.addEventListener("click", closeSetup);
+
   elements.setupAuthForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const password = elements.setupPassword?.value ?? "";
@@ -804,8 +1192,7 @@ function bindForms() {
     if (!name) return;
 
     try {
-      const employee = await state.repository.addEmployee(name);
-      state.selectedEmployeeId = employee.id;
+      await state.repository.addEmployee(name);
       if (elements.employeeName) elements.employeeName.value = "";
       await refresh();
     } catch (error) {
@@ -867,17 +1254,28 @@ function bindForms() {
     state.calendarMonth = addMonths(state.calendarMonth, 1);
     renderHistory();
   });
+
+  elements.spaceMoveUp?.addEventListener("click", async () => {
+    await moveSelectedSpace("up");
+  });
+
+  elements.spaceMoveDown?.addEventListener("click", async () => {
+    await moveSelectedSpace("down");
+  });
 }
 
 async function init() {
   try {
     initializeElements();
+    setLoading(true, "데이터를 불러오는 중입니다.");
     renderHeader();
+    activatePanel(state.activePanel);
     bindTabs();
-    state.repository = await createRepository();
     bindForms();
+    state.repository = await createRepository();
     await refresh();
   } catch (error) {
+    setLoading(false);
     renderHeader();
     setText(elements.setupStatus, `앱 초기화에 실패했습니다. ${getErrorMessage(error)}`);
     if (isMissingSupabaseTable(error)) {
