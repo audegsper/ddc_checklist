@@ -282,6 +282,11 @@ button {
   font-weight: 700;
 }
 
+.hero-tab {
+  width: 100%;
+  justify-self: stretch;
+}
+
 .tab.is-active,
 .hero-tab.is-active {
   background: var(--panel-strong);
@@ -377,6 +382,7 @@ button {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 10px;
+  width: 100%;
 }
 
 .field {
@@ -554,6 +560,42 @@ button:hover,
   gap: 12px;
   cursor: pointer;
   font-weight: 700;
+}
+
+.space-card__details summary {
+  padding: 4px 0;
+}
+
+.space-card__summary-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.space-card__summary-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(21, 111, 92, 0.08);
+  color: var(--primary-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.space-card__summary-toggle-icon {
+  display: inline-flex;
+  transition: transform 180ms ease;
+}
+
+.space-card__details[open] .space-card__summary-toggle {
+  background: rgba(21, 111, 92, 0.14);
+}
+
+.space-card__details[open] .space-card__summary-toggle-icon {
+  transform: rotate(90deg);
 }
 
 .space-card__details summary::-webkit-details-marker,
