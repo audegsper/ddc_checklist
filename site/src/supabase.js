@@ -11,7 +11,7 @@ function normalizeBootstrap(data) {
     history_limit: 10,
     timezone: "Asia/Seoul",
     show_employee_name: true,
-    admin_password: "8883",
+    admin_password: "1234",
   };
 
   return {
@@ -213,7 +213,7 @@ export async function createSupabaseRepository(config) {
           history_limit: Number(patch.history_limit ?? 10),
           timezone,
           show_employee_name: Boolean(patch.show_employee_name ?? true),
-          admin_password: patch.admin_password ?? "8883",
+          admin_password: patch.admin_password ?? "1234",
         });
         if (error) throw error;
       } else {
@@ -231,7 +231,7 @@ export async function createSupabaseRepository(config) {
         .limit(1)
         .maybeSingle();
       if (error) throw error;
-      return (data?.admin_password ?? "8883") === password;
+      return (data?.admin_password ?? "1234") === password;
     },
 
     async changePassword(currentPassword, nextPassword) {
@@ -242,7 +242,7 @@ export async function createSupabaseRepository(config) {
         .maybeSingle();
       if (error) throw error;
 
-      if ((data?.admin_password ?? "8883") !== currentPassword) {
+      if ((data?.admin_password ?? "1234") !== currentPassword) {
         throw new Error("현재 비밀번호가 일치하지 않습니다.");
       }
 

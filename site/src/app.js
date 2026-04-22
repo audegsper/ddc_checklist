@@ -126,7 +126,7 @@ function getSettings() {
       history_limit: 10,
       timezone: "Asia/Seoul",
       show_employee_name: true,
-      admin_password: "8883",
+      admin_password: "1234",
     }
   );
 }
@@ -671,7 +671,7 @@ function renderSetupAccess() {
   toggleClass(elements.setupContent, "is-hidden", !state.setupUnlocked);
   setText(
     elements.setupAuthHelp,
-    state.setupUnlocked ? "설정이 잠금 해제되었습니다." : "초기 비밀번호는 8883입니다.",
+    state.setupUnlocked ? "설정이 잠금 해제되었습니다." : "초기 비밀번호는 1234입니다.",
   );
 }
 

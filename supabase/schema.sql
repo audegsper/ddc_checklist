@@ -28,14 +28,14 @@ create table if not exists public.app_settings (
   history_limit integer not null default 10 check (history_limit > 0),
   timezone text not null default 'Asia/Seoul',
   show_employee_name boolean not null default true,
-  admin_password text not null default '8883',
+  admin_password text not null default '1234',
   updated_at timestamptz not null default now()
 );
 
 alter table public.app_settings add column if not exists history_limit integer not null default 10;
 alter table public.app_settings add column if not exists timezone text not null default 'Asia/Seoul';
 alter table public.app_settings add column if not exists show_employee_name boolean not null default true;
-alter table public.app_settings add column if not exists admin_password text not null default '8883';
+alter table public.app_settings add column if not exists admin_password text not null default '1234';
 alter table public.app_settings add column if not exists updated_at timestamptz not null default now();
 
 create table if not exists public.current_checks (
@@ -69,12 +69,12 @@ create table if not exists public.archived_checks (
 drop table if exists public.activity_logs;
 
 insert into public.app_settings (history_limit, timezone, show_employee_name, admin_password)
-select 10, 'Asia/Seoul', true, '8883'
+select 10, 'Asia/Seoul', true, '1234'
 where not exists (select 1 from public.app_settings);
 
 update public.app_settings
 set show_employee_name = coalesce(show_employee_name, true),
-    admin_password = coalesce(admin_password, '8883'),
+    admin_password = coalesce(admin_password, '1234'),
     updated_at = coalesce(updated_at, now());
 
 update public.spaces

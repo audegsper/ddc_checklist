@@ -36,7 +36,7 @@ const demoState = {
     history_limit: 10,
     timezone: "Asia/Seoul",
     show_employee_name: true,
-    admin_password: "8883",
+    admin_password: "1234",
     updated_at: nowIso(),
   },
 };
