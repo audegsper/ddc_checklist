@@ -31,7 +31,7 @@
         <div class="hero__topline">
           <div class="hero__headline">
             <h1 id="app-title">DD 체크리스트</h1>
-            <div id="version-pill" class="version-pill">버전 0.9.1</div>
+            <div id="version-pill" class="version-pill">버전 0.9.2</div>
           </div>
           <button
             id="setup-open-button"
@@ -291,24 +291,26 @@
       <article class="space-card">
         <div class="space-card__header">
           <h3 class="space-card__name"></h3>
-          <button class="ghost-button ghost-button--compact space-card__confirm" data-action="toggle-check">
-            확인
-          </button>
+          <div class="space-card__header-actions">
+            <button class="ghost-button ghost-button--compact space-card__confirm" data-action="toggle-check" type="button">
+              확인
+            </button>
+            <button
+              class="icon-button icon-button--ghost space-card__details-toggle"
+              data-action="toggle-details"
+              type="button"
+              aria-label="세부보기 열기"
+              aria-expanded="false"
+            >
+              +
+            </button>
+          </div>
         </div>
 
         <p class="helper-text space-card__owner is-hidden" data-role="owner-state"></p>
 
         <details class="space-card__details">
-          <summary>
-            <span class="space-card__summary-main">
-              <span>세부보기</span>
-              <span class="space-card__summary-toggle">
-                <span class="space-card__summary-toggle-text">열기</span>
-                <span class="space-card__summary-toggle-icon" aria-hidden="true">&#8250;</span>
-              </span>
-            </span>
-            <span class="space-card__summary-badges" data-role="summary-badges"></span>
-          </summary>
+          <summary class="space-card__details-summary" aria-hidden="true"></summary>
 
           <div class="space-card__details-body">
             <div class="surface">

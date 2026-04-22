@@ -11,7 +11,7 @@ import {
   getWorkDate,
 } from "./utils.js";
 
-const APP_VERSION = "버전 0.9.1";
+const APP_VERSION = "버전 0.9.2";
 const APP_DISPLAY_NAME = "DD 체크리스트";
 const config = window.__APP_CONFIG__ ?? {};
 const APP_TIMEZONE = config.timezone || "Asia/Seoul";
@@ -292,22 +292,13 @@ function buildOwnerText(currentCheck) {
   return `확인 직원: ${currentCheck.employee_name}`;
 }
 
-function buildDetailsBadges(space, comments, checklistType = state.selectedChecklistType) {
-  const badges = [];
-  if (getChecklistItems(space, checklistType).length) {
-    badges.push('<span class="summary-badge">체크항목 있음</span>');
-  }
-  if (comments.length) {
-    badges.push('<span class="summary-badge is-warning">메모 있음</span>');
-  }
-  return badges.join("");
-}
-
-function syncDetailsToggle(details) {
-  if (!details) return;
-  const toggleText = details.querySelector(".space-card__summary-toggle-text");
-  const nextLabel = details.open ? "닫기" : "열기";
-  setText(toggleText, nextLabel);
+function syncDetailsButton(button, detailsOpen, hasComments) {
+  if (!button) return;
+  setText(button, detailsOpen ? "-" : "+");
+  button.setAttribute("aria-label", detailsOpen ? "세부보기 닫기" : "세부보기 열기");
+  button.setAttribute("aria-expanded", detailsOpen ? "true" : "false");
+  toggleClass(button, "is-open", detailsOpen);
+  toggleClass(button, "has-note", hasComments);
 }
 
 function renderChecklistItemsMarkup(space, checklistType = state.selectedChecklistType) {
@@ -527,11 +518,10 @@ function buildSpaceCard(space) {
   const card = fragment.querySelector(".space-card");
   const name = fragment.querySelector(".space-card__name");
   const confirmButton = fragment.querySelector('[data-action="toggle-check"]');
+  const detailsToggleButton = fragment.querySelector('[data-action="toggle-details"]');
   const ownerState = fragment.querySelector('[data-role="owner-state"]');
   const details = fragment.querySelector(".space-card__details");
-  const detailsToggleText = fragment.querySelector(".space-card__summary-toggle-text");
   const checklistItems = fragment.querySelector('[data-role="checklist-items"]');
-  const summaryBadges = fragment.querySelector('[data-role="summary-badges"]');
   const commentInput = fragment.querySelector(".space-card__comment");
   const saveCommentButton = fragment.querySelector('[data-action="save-comment"]');
   const cancelCommentButton = fragment.querySelector('[data-action="cancel-comment"]');
@@ -550,17 +540,23 @@ function buildSpaceCard(space) {
   toggleClass(ownerState, "is-hidden", !ownerText);
 
   setHtml(checklistItems, renderChecklistItemsMarkup(space));
-  setHtml(summaryBadges, buildDetailsBadges(space, comments));
   setHtml(commentList, renderCurrentCommentsMarkup(comments));
   commentInput.value = draft.text ?? "";
   setText(saveCommentButton, draft.editingCommentId ? "수정 저장" : "메모 저장");
   toggleClass(cancelCommentButton, "is-hidden", !draft.editingCommentId);
 
   details.open = isDetailsOpen(space.id);
-  setText(detailsToggleText, details.open ? "닫기" : "열기");
+  syncDetailsButton(detailsToggleButton, details.open, comments.length > 0);
   details.addEventListener("toggle", () => {
     setDetailsOpen(space.id, details.open);
-    syncDetailsToggle(details);
+    syncDetailsButton(detailsToggleButton, details.open, comments.length > 0);
+  });
+
+  detailsToggleButton.addEventListener("click", () => {
+    const nextOpen = !details.open;
+    details.open = nextOpen;
+    setDetailsOpen(space.id, nextOpen);
+    syncDetailsButton(detailsToggleButton, nextOpen, comments.length > 0);
   });
 
   commentInput.addEventListener("input", (event) => {
