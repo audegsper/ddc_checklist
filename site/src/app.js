@@ -21,40 +21,62 @@ const state = {
   repository: null,
 };
 
-const elements = {
-  title: document.getElementById("app-title"),
-  todayLabel: document.getElementById("today-label"),
-  syncPill: document.getElementById("sync-pill"),
-  employeeCard: document.getElementById("employee-card"),
-  employeeSelect: document.getElementById("employee-select"),
-  employeeHelp: document.getElementById("employee-help"),
-  spacesList: document.getElementById("spaces-list"),
-  employeeForm: document.getElementById("employee-form"),
-  employeeName: document.getElementById("employee-name"),
-  employeeList: document.getElementById("employee-list"),
-  spaceForm: document.getElementById("space-form"),
-  spaceName: document.getElementById("space-name"),
-  manageSpacesList: document.getElementById("manage-spaces-list"),
-  historyList: document.getElementById("history-list"),
-  historySummary: document.getElementById("history-summary"),
-  calendarGrid: document.getElementById("calendar-grid"),
-  calendarLabel: document.getElementById("calendar-label"),
-  calendarPrev: document.getElementById("calendar-prev"),
-  calendarNext: document.getElementById("calendar-next"),
-  settingsForm: document.getElementById("settings-form"),
-  historyLimit: document.getElementById("history-limit"),
-  showEmployeeToggle: document.getElementById("show-employee-toggle"),
-  setupStatus: document.getElementById("setup-status"),
-  template: document.getElementById("space-card-template"),
-  tabs: Array.from(document.querySelectorAll(".tab")),
-  panels: Array.from(document.querySelectorAll(".panel")),
-  checklistTabs: Array.from(document.querySelectorAll(".hero-tab")),
-  checklistTitle: document.getElementById("checklist-title"),
-  checklistDescription: document.getElementById("checklist-description"),
-  summaryCount: document.getElementById("summary-count"),
-  summaryCaption: document.getElementById("summary-caption"),
-  finalizeButton: document.getElementById("finalize-button"),
-};
+let elements = {};
+
+function initializeElements() {
+  elements = {
+    title: document.getElementById("app-title"),
+    todayLabel: document.getElementById("today-label"),
+    syncPill: document.getElementById("sync-pill"),
+    employeeCard: document.getElementById("employee-card"),
+    employeeSelect: document.getElementById("employee-select"),
+    employeeHelp: document.getElementById("employee-help"),
+    spacesList: document.getElementById("spaces-list"),
+    employeeForm: document.getElementById("employee-form"),
+    employeeName: document.getElementById("employee-name"),
+    employeeList: document.getElementById("employee-list"),
+    spaceForm: document.getElementById("space-form"),
+    spaceName: document.getElementById("space-name"),
+    manageSpacesList: document.getElementById("manage-spaces-list"),
+    historyList: document.getElementById("history-list"),
+    historySummary: document.getElementById("history-summary"),
+    calendarGrid: document.getElementById("calendar-grid"),
+    calendarLabel: document.getElementById("calendar-label"),
+    calendarPrev: document.getElementById("calendar-prev"),
+    calendarNext: document.getElementById("calendar-next"),
+    settingsForm: document.getElementById("settings-form"),
+    historyLimit: document.getElementById("history-limit"),
+    showEmployeeToggle: document.getElementById("show-employee-toggle"),
+    setupStatus: document.getElementById("setup-status"),
+    template: document.getElementById("space-card-template"),
+    tabs: Array.from(document.querySelectorAll(".tab")),
+    panels: Array.from(document.querySelectorAll(".panel")),
+    checklistTabs: Array.from(document.querySelectorAll(".hero-tab")),
+    checklistTitle: document.getElementById("checklist-title"),
+    checklistDescription: document.getElementById("checklist-description"),
+    summaryCount: document.getElementById("summary-count"),
+    summaryCaption: document.getElementById("summary-caption"),
+    finalizeButton: document.getElementById("finalize-button"),
+  };
+}
+
+function setText(element, value) {
+  if (element) {
+    element.textContent = value;
+  }
+}
+
+function setHtml(element, value) {
+  if (element) {
+    element.innerHTML = value;
+  }
+}
+
+function toggleClass(element, className, enabled) {
+  if (element) {
+    element.classList.toggle(className, enabled);
+  }
+}
 
 function canUseSupabase() {
   return Boolean(config.useSupabase && config.supabaseUrl && config.supabaseAnonKey);
@@ -81,7 +103,7 @@ function buildSupabaseSchemaHelp() {
 
 function showSchemaHelp(error) {
   const message = `${buildSupabaseSchemaHelp()}\n\n원본 오류:\n${getErrorMessage(error)}`;
-  elements.setupStatus.textContent = message;
+  setText(elements.setupStatus, message);
   window.alert(message);
 }
 
@@ -151,21 +173,26 @@ async function refresh() {
 }
 
 function renderHeader() {
-  elements.title.textContent = config.appName || "병원 체크리스트";
-  elements.todayLabel.textContent = formatKoreanDate(new Date(), config.timezone || "Asia/Seoul");
-  elements.syncPill.textContent = canUseSupabase() ? "Supabase 연결됨" : "데모 모드";
-  elements.setupStatus.textContent = canUseSupabase()
-    ? "현재 Supabase 연결 설정이 켜져 있습니다. 실제 DB에 저장됩니다."
-    : "`site/app-config.js`에 Supabase 값을 넣기 전까지는 브라우저 로컬 저장소를 사용합니다.";
+  setText(elements.title, config.appName || "병원 체크리스트");
+  setText(elements.todayLabel, formatKoreanDate(new Date(), config.timezone || "Asia/Seoul"));
+  setText(elements.syncPill, canUseSupabase() ? "Supabase 연결됨" : "데모 모드");
+  setText(
+    elements.setupStatus,
+    canUseSupabase()
+      ? "현재 Supabase 연결 설정이 켜져 있습니다. 실제 DB에 저장됩니다."
+      : "`site/app-config.js`에 Supabase 값을 넣기 전까지는 브라우저 로컬 저장소를 사용합니다.",
+  );
 }
 
 function renderChecklistTabs() {
   const checklistName = getChecklistLabel();
-  elements.checklistTitle.textContent = `${checklistName} 공간 점검`;
-  elements.checklistDescription.textContent =
+  setText(elements.checklistTitle, `${checklistName} 공간 점검`);
+  setText(
+    elements.checklistDescription,
     state.selectedChecklistType === "open"
       ? "오픈 준비에 필요한 공간별 확인 여부와 메모를 관리합니다."
-      : "마감 확인에 필요한 공간별 상태와 메모를 관리합니다.";
+      : "마감 확인에 필요한 공간별 상태와 메모를 관리합니다.",
+  );
 
   elements.checklistTabs.forEach((button) => {
     button.classList.toggle("is-active", button.dataset.checklistType === state.selectedChecklistType);
@@ -176,13 +203,16 @@ function renderEmployees() {
   const employees = state.bootstrap?.employees ?? [];
   const shouldShowEmployee = showEmployeeName();
 
-  elements.employeeCard.classList.toggle("is-hidden", !shouldShowEmployee);
-  elements.employeeSelect.innerHTML = "";
+  toggleClass(elements.employeeCard, "is-hidden", !shouldShowEmployee);
+  if (elements.employeeSelect) elements.employeeSelect.innerHTML = "";
 
   if (!shouldShowEmployee) {
-    elements.employeeList.innerHTML = employees.length
+    setHtml(
+      elements.employeeList,
+      employees.length
       ? employees.map((employee) => `<span class="chip">${escapeHtml(employee.name)}</span>`).join("")
-      : '<div class="empty-state">직원 목록은 저장되어 있지만 현재 표시하지 않도록 설정되어 있습니다.</div>';
+      : '<div class="empty-state">직원 목록은 저장되어 있지만 현재 표시하지 않도록 설정되어 있습니다.</div>',
+    );
     return;
   }
 
@@ -190,26 +220,29 @@ function renderEmployees() {
     const option = document.createElement("option");
     option.value = "";
     option.textContent = "직원을 먼저 추가해 주세요";
-    elements.employeeSelect.append(option);
-    elements.employeeSelect.disabled = true;
-    elements.employeeHelp.textContent = "관리 탭에서 직원을 추가하면 여기에서 선택할 수 있습니다.";
-    elements.employeeList.innerHTML = '<div class="empty-state">아직 등록된 직원이 없습니다.</div>';
+    if (elements.employeeSelect) {
+      elements.employeeSelect.append(option);
+      elements.employeeSelect.disabled = true;
+    }
+    setText(elements.employeeHelp, "관리 탭에서 직원을 추가하면 여기에서 선택할 수 있습니다.");
+    setHtml(elements.employeeList, '<div class="empty-state">아직 등록된 직원이 없습니다.</div>');
     return;
   }
 
-  elements.employeeSelect.disabled = false;
-  elements.employeeHelp.textContent = "현재 선택한 직원 이름은 체크와 메모에 함께 저장됩니다.";
+  if (elements.employeeSelect) elements.employeeSelect.disabled = false;
+  setText(elements.employeeHelp, "현재 선택한 직원 이름은 체크와 메모에 함께 저장됩니다.");
   employees.forEach((employee) => {
     const option = document.createElement("option");
     option.value = employee.id;
     option.textContent = employee.name;
     option.selected = employee.id === state.selectedEmployeeId;
-    elements.employeeSelect.append(option);
+    if (elements.employeeSelect) elements.employeeSelect.append(option);
   });
 
-  elements.employeeList.innerHTML = employees
-    .map((employee) => `<span class="chip">${escapeHtml(employee.name)}</span>`)
-    .join("");
+  setHtml(
+    elements.employeeList,
+    employees.map((employee) => `<span class="chip">${escapeHtml(employee.name)}</span>`).join(""),
+  );
 }
 
 function renderChecklistSummary() {
@@ -217,9 +250,12 @@ function renderChecklistSummary() {
   const checkedCount = spaces.filter((space) => getCurrentCheck(space.id)?.checked).length;
   const checklistName = getChecklistLabel();
 
-  elements.summaryCount.textContent = `${checkedCount} / ${spaces.length} 공간 확인 완료`;
-  elements.summaryCaption.textContent = `오늘 ${checklistName} 체크의 최종 결과만 기록으로 넘기고, 넘긴 뒤 현재 상태는 초기화됩니다.`;
-  elements.finalizeButton.textContent = `오늘 ${checklistName} 결과 기록으로 넘기기`;
+  setText(elements.summaryCount, `${checkedCount} / ${spaces.length} 공간 확인 완료`);
+  setText(
+    elements.summaryCaption,
+    `오늘 ${checklistName} 체크의 최종 결과만 기록으로 넘기고, 넘긴 뒤 현재 상태는 초기화됩니다.`,
+  );
+  setText(elements.finalizeButton, `오늘 ${checklistName} 결과 기록으로 넘기기`);
 }
 
 function buildOwnerText(currentCheck) {
@@ -241,11 +277,10 @@ function buildDetailsBadges(currentCheck, templateText) {
 
 function renderSpaces() {
   const spaces = state.bootstrap?.spaces ?? [];
-  elements.spacesList.innerHTML = "";
+  if (elements.spacesList) elements.spacesList.innerHTML = "";
 
   if (!spaces.length) {
-    elements.spacesList.innerHTML =
-      '<div class="empty-state">공간을 추가하면 이곳에 점검 카드가 표시됩니다.</div>';
+    setHtml(elements.spacesList, '<div class="empty-state">공간을 추가하면 이곳에 점검 카드가 표시됩니다.</div>');
     return;
   }
 
@@ -367,17 +402,19 @@ function renderSpaces() {
       }
     });
 
-    elements.spacesList.append(card);
+    if (elements.spacesList) elements.spacesList.append(card);
   });
 }
 
 function renderManageSpaces() {
   const spaces = state.bootstrap?.spaces ?? [];
-  elements.manageSpacesList.innerHTML = "";
+  if (elements.manageSpacesList) elements.manageSpacesList.innerHTML = "";
 
   if (!spaces.length) {
-    elements.manageSpacesList.innerHTML =
-      '<div class="empty-state">공간을 추가하면 이곳에서 체크 항목과 순서를 편집할 수 있습니다.</div>';
+    setHtml(
+      elements.manageSpacesList,
+      '<div class="empty-state">공간을 추가하면 이곳에서 체크 항목과 순서를 편집할 수 있습니다.</div>',
+    );
     return;
   }
 
@@ -449,7 +486,7 @@ function renderManageSpaces() {
       }
     });
 
-    elements.manageSpacesList.append(wrapper);
+    if (elements.manageSpacesList) elements.manageSpacesList.append(wrapper);
   });
 }
 
@@ -464,10 +501,12 @@ function renderHistory() {
     archiveMap.set(item.archive_date, list);
   });
 
-  elements.calendarLabel.textContent = formatYearMonth(state.calendarMonth);
-  elements.historySummary.textContent = `보관 중인 날짜 수: ${[...new Set(archives.map((item) => item.archive_date))].length}일`;
+  setText(elements.calendarLabel, formatYearMonth(state.calendarMonth));
+  setText(elements.historySummary, `보관 중인 날짜 수: ${[...new Set(archives.map((item) => item.archive_date))].length}일`);
 
-  elements.calendarGrid.innerHTML = days
+  setHtml(
+    elements.calendarGrid,
+    days
     .map((day) => {
       const entries = archiveMap.get(day.key) ?? [];
       const openCount = entries.filter((item) => item.checklist_type === "open").length;
@@ -490,9 +529,10 @@ function renderHistory() {
         </button>
       `;
     })
-    .join("");
+    .join(""),
+  );
 
-  Array.from(elements.calendarGrid.querySelectorAll("[data-date]")).forEach((button) => {
+  Array.from(elements.calendarGrid?.querySelectorAll("[data-date]") ?? []).forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedDate = button.dataset.date;
       renderHistory();
@@ -505,12 +545,13 @@ function renderHistory() {
   });
 
   if (!selectedEntries.length) {
-    elements.historyList.innerHTML = `<div class="empty-state">${state.selectedDate} 기록이 없습니다.</div>`;
+    setHtml(elements.historyList, `<div class="empty-state">${state.selectedDate} 기록이 없습니다.</div>`);
     return;
   }
 
-  elements.historyList.innerHTML = selectedEntries
-    .map((item) => {
+  setHtml(
+    elements.historyList,
+    selectedEntries.map((item) => {
       const commentText = item.comment?.trim() ? item.comment : "메모 없음";
       const ownerText =
         showEmployeeName() && item.employee_name
@@ -531,14 +572,14 @@ function renderHistory() {
           <p class="history-item__body">${escapeHtml(commentText)}</p>
         </article>
       `;
-    })
-    .join("");
+    }).join(""),
+  );
 }
 
 function renderSettings() {
   const settings = getSettings();
-  elements.historyLimit.value = String(settings.history_limit ?? 10);
-  elements.showEmployeeToggle.checked = Boolean(settings.show_employee_name);
+  if (elements.historyLimit) elements.historyLimit.value = String(settings.history_limit ?? 10);
+  if (elements.showEmployeeToggle) elements.showEmployeeToggle.checked = Boolean(settings.show_employee_name);
 }
 
 function bindTabs() {
@@ -563,11 +604,11 @@ function bindTabs() {
 }
 
 function bindForms() {
-  elements.employeeSelect.addEventListener("change", (event) => {
+  elements.employeeSelect?.addEventListener("change", (event) => {
     state.selectedEmployeeId = event.target.value;
   });
 
-  elements.employeeForm.addEventListener("submit", async (event) => {
+  elements.employeeForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const name = elements.employeeName.value.trim();
     if (!name) return;
@@ -586,7 +627,7 @@ function bindForms() {
     }
   });
 
-  elements.spaceForm.addEventListener("submit", async (event) => {
+  elements.spaceForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const name = elements.spaceName.value.trim();
     if (!name) return;
@@ -604,7 +645,7 @@ function bindForms() {
     }
   });
 
-  elements.settingsForm.addEventListener("submit", async (event) => {
+  elements.settingsForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const historyLimit = Number(elements.historyLimit.value);
     if (!Number.isFinite(historyLimit) || historyLimit < 1) {
@@ -615,7 +656,7 @@ function bindForms() {
     try {
       await state.repository.updateSettings({
         history_limit: historyLimit,
-        show_employee_name: elements.showEmployeeToggle.checked,
+        show_employee_name: Boolean(elements.showEmployeeToggle?.checked),
       });
       await refresh();
     } catch (error) {
@@ -627,7 +668,7 @@ function bindForms() {
     }
   });
 
-  elements.finalizeButton.addEventListener("click", async () => {
+  elements.finalizeButton?.addEventListener("click", async () => {
     const checklistName = getChecklistLabel();
     const confirmed = window.confirm(
       `오늘 ${checklistName} 체크 최종 결과를 기록으로 넘기고 현재 상태를 초기화할까요?`,
@@ -652,12 +693,12 @@ function bindForms() {
     }
   });
 
-  elements.calendarPrev.addEventListener("click", () => {
+  elements.calendarPrev?.addEventListener("click", () => {
     state.calendarMonth = addMonths(state.calendarMonth, -1);
     renderHistory();
   });
 
-  elements.calendarNext.addEventListener("click", () => {
+  elements.calendarNext?.addEventListener("click", () => {
     state.calendarMonth = addMonths(state.calendarMonth, 1);
     renderHistory();
   });
@@ -665,6 +706,7 @@ function bindForms() {
 
 async function init() {
   try {
+    initializeElements();
     state.repository = await createRepository();
     bindTabs();
     bindForms();
@@ -678,7 +720,16 @@ async function init() {
   }
 }
 
-init().catch((error) => {
-  console.error(error);
-  window.alert(`앱 초기화에 실패했습니다.\n${getErrorMessage(error)}`);
-});
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => {
+    init().catch((error) => {
+      console.error(error);
+      window.alert(`앱 초기화에 실패했습니다.\n${getErrorMessage(error)}`);
+    });
+  });
+} else {
+  init().catch((error) => {
+    console.error(error);
+    window.alert(`앱 초기화에 실패했습니다.\n${getErrorMessage(error)}`);
+  });
+}
