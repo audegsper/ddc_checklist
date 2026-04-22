@@ -11,7 +11,7 @@ import {
   getWorkDate,
 } from "./utils.js";
 
-const APP_VERSION = "버전 0.8.2";
+const APP_VERSION = "버전 0.8.3";
 const config = window.__APP_CONFIG__ ?? {};
 const APP_TIMEZONE = config.timezone || "Asia/Seoul";
 
@@ -424,43 +424,6 @@ function renderSpaces() {
     });
 
     if (elements.spacesList) elements.spacesList.append(card);
-  });
-}
-
-function renderEmployeeChips() {
-  const employees = state.bootstrap?.employees ?? [];
-  if (!employees.length) {
-    setHtml(elements.employeeList, '<div class="empty-state">아직 등록된 직원이 없습니다.</div>');
-    return;
-  }
-
-  setHtml(
-    elements.employeeList,
-    employees
-      .map(
-        (employee) => `
-          <span class="chip chip--removable">
-            <span>${escapeHtml(employee.name)}</span>
-            <button class="chip__remove" data-delete-employee="${escapeHtml(employee.id)}" type="button">X</button>
-          </span>
-        `,
-      )
-      .join(""),
-  );
-
-  Array.from(elements.employeeList?.querySelectorAll("[data-delete-employee]") ?? []).forEach((button) => {
-    button.addEventListener("click", async () => {
-      const employeeId = button.dataset.deleteEmployee;
-      const employee = employees.find((item) => item.id === employeeId);
-      const confirmed = window.confirm(`${employee?.name ?? "이 직원"}을(를) 삭제하시겠습니까?`);
-      if (!confirmed) return;
-      try {
-        await state.repository.deleteEmployee(employeeId);
-        await refresh();
-      } catch (error) {
-        window.alert(`직원 삭제에 실패했습니다.\n${getErrorMessage(error)}`);
-      }
-    });
   });
 }
 
