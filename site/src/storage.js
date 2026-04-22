@@ -96,7 +96,7 @@ function migrateLegacyComments(state) {
       .map((item) => ({
         id: createId("comment"),
         work_date: item.work_date,
-        checklist_type: item.checklist_type,
+        checklist_type: "shared",
         space_id: item.space_id,
         space_name: item.space_name,
         employee_id: item.comment_employee_id ?? item.employee_id ?? null,
@@ -113,7 +113,7 @@ function migrateLegacyComments(state) {
       .map((item) => ({
         id: createId("archive_comment"),
         archive_date: item.archive_date,
-        checklist_type: item.checklist_type,
+        checklist_type: "shared",
         space_id: item.space_id,
         space_name: item.space_name,
         employee_id: item.comment_employee_id ?? item.employee_id ?? null,
@@ -232,9 +232,6 @@ function finalizeChecklistForDate(state, checklistType, targetDate) {
   state.archived_checks = state.archived_checks.filter(
     (item) => !(item.archive_date === targetDate && item.checklist_type === checklistType),
   );
-  state.archived_comments = state.archived_comments.filter(
-    (item) => !(item.archive_date === targetDate && item.checklist_type === checklistType),
-  );
 
   sortSpaces(state.spaces).forEach((space) => {
     const current = currentMap.get(space.id);
@@ -255,14 +252,24 @@ function finalizeChecklistForDate(state, checklistType, targetDate) {
     });
   });
 
+  state.current_checks = state.current_checks.filter(
+    (item) => !(item.work_date === targetDate && item.checklist_type === checklistType),
+  );
+}
+
+function finalizeCommentsForDate(state, targetDate) {
+  state.archived_comments = state.archived_comments.filter(
+    (item) => !(item.archive_date === targetDate && item.checklist_type === "shared"),
+  );
+
   state.current_comments
-    .filter((item) => item.work_date === targetDate && item.checklist_type === checklistType)
+    .filter((item) => item.work_date === targetDate)
     .forEach((item) => {
       const space = state.spaces.find((entry) => entry.id === item.space_id);
       state.archived_comments.push({
         id: createId("archive_comment"),
         archive_date: targetDate,
-        checklist_type: checklistType,
+        checklist_type: "shared",
         space_id: item.space_id,
         space_name: item.space_name,
         employee_id: item.employee_id ?? null,
@@ -275,12 +282,7 @@ function finalizeChecklistForDate(state, checklistType, targetDate) {
       });
     });
 
-  state.current_checks = state.current_checks.filter(
-    (item) => !(item.work_date === targetDate && item.checklist_type === checklistType),
-  );
-  state.current_comments = state.current_comments.filter(
-    (item) => !(item.work_date === targetDate && item.checklist_type === checklistType),
-  );
+  state.current_comments = state.current_comments.filter((item) => item.work_date !== targetDate);
 }
 
 function autoArchiveIfNeeded(state, timezone = "Asia/Seoul") {
@@ -300,6 +302,7 @@ function autoArchiveIfNeeded(state, timezone = "Asia/Seoul") {
         CHECKLIST_TYPES.forEach((checklistType) => {
           finalizeChecklistForDate(state, checklistType, workDate);
         });
+        finalizeCommentsForDate(state, workDate);
       });
     }
     state.app_settings.last_daily_archive_date = yesterday;
@@ -307,6 +310,7 @@ function autoArchiveIfNeeded(state, timezone = "Asia/Seoul") {
     CHECKLIST_TYPES.forEach((checklistType) => {
       finalizeChecklistForDate(state, checklistType, yesterday);
     });
+    finalizeCommentsForDate(state, yesterday);
     state.app_settings.last_daily_archive_date = yesterday;
   }
 
@@ -466,7 +470,7 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
       state.current_comments.push({
         id: createId("comment"),
         work_date: payload.work_date ?? getWorkDate(timezone),
-        checklist_type: payload.checklist_type,
+        checklist_type: payload.checklist_type ?? "shared",
         space_id: payload.space_id,
         space_name: payload.space_name,
         employee_id: payload.employee_id ?? null,

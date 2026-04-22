@@ -122,7 +122,6 @@ export async function createSupabaseRepository(config) {
     const [
       { data: spaces, error: spacesError },
       { data: currentChecks, error: currentError },
-      { data: currentComments, error: commentsError },
     ] = await Promise.all([
       client.from("spaces").select("*").eq("is_active", true).order("sort_order"),
       client
@@ -130,16 +129,9 @@ export async function createSupabaseRepository(config) {
         .select("*")
         .eq("work_date", targetDate)
         .eq("checklist_type", checklistType),
-      client
-        .from("current_comments")
-        .select("*")
-        .eq("work_date", targetDate)
-        .eq("checklist_type", checklistType)
-        .order("created_at"),
     ]);
     if (spacesError) throw spacesError;
     if (currentError) throw currentError;
-    if (commentsError) throw commentsError;
 
     const { error: deleteExistingArchiveError } = await client
       .from("archived_checks")
@@ -147,13 +139,6 @@ export async function createSupabaseRepository(config) {
       .eq("archive_date", targetDate)
       .eq("checklist_type", checklistType);
     if (deleteExistingArchiveError) throw deleteExistingArchiveError;
-
-    const { error: deleteExistingArchiveCommentsError } = await client
-      .from("archived_comments")
-      .delete()
-      .eq("archive_date", targetDate)
-      .eq("checklist_type", checklistType);
-    if (deleteExistingArchiveCommentsError) throw deleteExistingArchiveCommentsError;
 
     const currentMap = new Map((currentChecks ?? []).map((item) => [item.space_id, item]));
     const archivePayload = (spaces ?? []).map((space) => {
@@ -207,12 +192,57 @@ export async function createSupabaseRepository(config) {
       .eq("work_date", targetDate)
       .eq("checklist_type", checklistType);
     if (deleteCurrentChecksError) throw deleteCurrentChecksError;
+  }
+
+  async function finalizeCommentsForDate(targetDate) {
+    const [
+      { data: spaces, error: spacesError },
+      { data: currentComments, error: commentsError },
+    ] = await Promise.all([
+      client.from("spaces").select("id, sort_order").eq("is_active", true).order("sort_order"),
+      client
+        .from("current_comments")
+        .select("*")
+        .eq("work_date", targetDate)
+        .order("created_at"),
+    ]);
+    if (spacesError) throw spacesError;
+    if (commentsError) throw commentsError;
+
+    const { error: deleteExistingArchiveCommentsError } = await client
+      .from("archived_comments")
+      .delete()
+      .eq("archive_date", targetDate)
+      .eq("checklist_type", "shared");
+    if (deleteExistingArchiveCommentsError) throw deleteExistingArchiveCommentsError;
+
+    const archiveCommentPayload = (currentComments ?? []).map((comment) => {
+      const space = (spaces ?? []).find((item) => item.id === comment.space_id);
+      return {
+        archive_date: targetDate,
+        checklist_type: "shared",
+        space_id: comment.space_id,
+        space_name: comment.space_name,
+        employee_id: comment.employee_id ?? null,
+        employee_name: comment.employee_name ?? "",
+        content: comment.content ?? "",
+        sort_order: Number(space?.sort_order ?? 1),
+        created_at: comment.created_at,
+        updated_at: comment.updated_at,
+      };
+    });
+
+    if (archiveCommentPayload.length) {
+      const { error: insertArchiveCommentsError } = await client
+        .from("archived_comments")
+        .insert(archiveCommentPayload);
+      if (insertArchiveCommentsError) throw insertArchiveCommentsError;
+    }
 
     const { error: deleteCurrentCommentsError } = await client
       .from("current_comments")
       .delete()
-      .eq("work_date", targetDate)
-      .eq("checklist_type", checklistType);
+      .eq("work_date", targetDate);
     if (deleteCurrentCommentsError) throw deleteCurrentCommentsError;
   }
 
@@ -246,6 +276,7 @@ export async function createSupabaseRepository(config) {
         for (const checklistType of CHECKLIST_TYPES) {
           await finalizeChecklistForDate(checklistType, workDate);
         }
+        await finalizeCommentsForDate(workDate);
       }
 
       const { error } = await client
@@ -257,6 +288,7 @@ export async function createSupabaseRepository(config) {
       for (const checklistType of CHECKLIST_TYPES) {
         await finalizeChecklistForDate(checklistType, yesterday);
       }
+      await finalizeCommentsForDate(yesterday);
 
       const { error } = await client
         .from("app_settings")
@@ -542,7 +574,7 @@ export async function createSupabaseRepository(config) {
     async addCurrentComment(payload) {
       const { error } = await client.from("current_comments").insert({
         work_date: payload.work_date ?? getWorkDate(timezone),
-        checklist_type: payload.checklist_type,
+        checklist_type: payload.checklist_type ?? "shared",
         space_id: payload.space_id,
         space_name: payload.space_name,
         employee_id: payload.employee_id ?? null,

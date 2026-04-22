@@ -11,7 +11,7 @@ import {
   getWorkDate,
 } from "./utils.js";
 
-const APP_VERSION = "버전 1.0.0";
+const APP_VERSION = "버전 1.1.1";
 const APP_DISPLAY_NAME = "DD 체크리스트";
 const config = window.__APP_CONFIG__ ?? {};
 const APP_TIMEZONE = config.timezone || "Asia/Seoul";
@@ -189,23 +189,21 @@ function getCurrentCheck(spaceId, checklistType = state.selectedChecklistType) {
   );
 }
 
-function getCurrentComments(spaceId, checklistType = state.selectedChecklistType) {
+function getCurrentComments(spaceId) {
   return (state.bootstrap?.current_comments ?? [])
     .filter(
       (item) =>
         item.space_id === spaceId &&
-        item.checklist_type === checklistType &&
         item.work_date === getWorkDate(APP_TIMEZONE),
     )
     .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 }
 
-function getArchivedComments(archiveDate, checklistType, spaceId) {
+function getArchivedComments(archiveDate, spaceId) {
   return (state.bootstrap?.archived_comments ?? [])
     .filter(
       (item) =>
         item.archive_date === archiveDate &&
-        item.checklist_type === checklistType &&
         item.space_id === spaceId,
     )
     .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
@@ -243,29 +241,29 @@ function sortChecklistSpaces(spaces) {
   return [...spaces].sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
 }
 
-function getCommentDraftKey(spaceId, checklistType = state.selectedChecklistType) {
-  return `${checklistType}:${spaceId}`;
+function getCommentDraftKey(spaceId) {
+  return String(spaceId);
 }
 
-function getCommentDraft(spaceId, checklistType = state.selectedChecklistType) {
+function getCommentDraft(spaceId) {
   return (
-    state.commentDrafts[getCommentDraftKey(spaceId, checklistType)] ?? {
+    state.commentDrafts[getCommentDraftKey(spaceId)] ?? {
       text: "",
       editingCommentId: null,
     }
   );
 }
 
-function setCommentDraft(spaceId, patch, checklistType = state.selectedChecklistType) {
-  const key = getCommentDraftKey(spaceId, checklistType);
+function setCommentDraft(spaceId, patch) {
+  const key = getCommentDraftKey(spaceId);
   state.commentDrafts[key] = {
-    ...getCommentDraft(spaceId, checklistType),
+    ...getCommentDraft(spaceId),
     ...patch,
   };
 }
 
-function clearCommentDraft(spaceId, checklistType = state.selectedChecklistType) {
-  delete state.commentDrafts[getCommentDraftKey(spaceId, checklistType)];
+function clearCommentDraft(spaceId) {
+  delete state.commentDrafts[getCommentDraftKey(spaceId)];
 }
 
 function getOpenDetailsType(spaceId) {
@@ -528,17 +526,6 @@ function renderChecklistSummary() {
   setText(elements.summaryCaption, "");
 }
 
-function buildDetailsBadges(space, checklistType, comments) {
-  const badges = [];
-  if (getChecklistItems(space, checklistType).length) {
-    badges.push('<span class="summary-badge">체크항목 있음</span>');
-  }
-  if (comments.length) {
-    badges.push('<span class="summary-badge is-warning">메모 있음</span>');
-  }
-  return badges.join("");
-}
-
 function buildSpaceCard(space) {
   const fragment = elements.template.content.cloneNode(true);
   const card = fragment.querySelector(".space-card");
@@ -547,8 +534,8 @@ function buildSpaceCard(space) {
   const ownerState = fragment.querySelector('[data-role="owner-state"]');
   const detailsPanel = fragment.querySelector('[data-role="details-panel"]');
   const detailsTitle = fragment.querySelector('[data-role="details-title"]');
+  const detailsConfirmButton = fragment.querySelector('[data-role="details-confirm"]');
   const checklistItems = fragment.querySelector('[data-role="checklist-items"]');
-  const summaryBadges = fragment.querySelector('[data-role="summary-badges"]');
   const commentInput = fragment.querySelector(".space-card__comment");
   const saveCommentButton = fragment.querySelector('[data-action="save-comment"]');
   const cancelCommentButton = fragment.querySelector('[data-action="cancel-comment"]');
@@ -556,8 +543,9 @@ function buildSpaceCard(space) {
   const currentCheck = getCurrentCheck(space.id, state.selectedChecklistType);
   const visibleDetailsType = getOpenDetailsType(space.id);
   const checklistType = visibleDetailsType || state.selectedChecklistType;
-  const comments = getCurrentComments(space.id, checklistType);
-  const draft = getCommentDraft(space.id, checklistType);
+  const detailCheck = getCurrentCheck(space.id, checklistType);
+  const comments = getCurrentComments(space.id);
+  const draft = getCommentDraft(space.id);
   const ownerText = buildOwnerText(currentCheck);
   const isPanelOpen = Boolean(visibleDetailsType);
 
@@ -565,6 +553,7 @@ function buildSpaceCard(space) {
   toggleClass(card, "is-checked", Boolean(currentCheck?.checked));
 
   setText(name, space.name);
+  toggleClass(name, "has-note", comments.length > 0);
   setText(ownerState, ownerText);
   toggleClass(ownerState, "is-hidden", !ownerText);
 
@@ -572,13 +561,12 @@ function buildSpaceCard(space) {
     typeControls,
     CHECKLIST_TYPES.map((type) => {
       const typeCheck = getCurrentCheck(space.id, type.id);
-      const typeComments = getCurrentComments(space.id, type.id);
       const isActive = visibleDetailsType === type.id;
 
       return `
         <div class="space-card__type-control ${isActive ? "is-active" : ""}">
           <button
-            class="space-card__type-button ${isActive ? "is-active" : ""} ${typeComments.length ? "has-note" : ""}"
+            class="space-card__type-button ${isActive ? "is-active" : ""}"
             data-action="toggle-detail-type"
             data-checklist-type="${type.id}"
             type="button"
@@ -605,33 +593,71 @@ function buildSpaceCard(space) {
   if (isPanelOpen) {
     setText(detailsTitle, `${getChecklistLabel(checklistType)} 세부내용`);
     setHtml(checklistItems, renderChecklistItemsMarkup(space, checklistType));
-    setHtml(summaryBadges, buildDetailsBadges(space, checklistType, comments));
     setHtml(commentList, renderCurrentCommentsMarkup(comments));
     commentInput.value = draft.text ?? "";
-    commentInput.placeholder = `${getChecklistLabel(checklistType)} 메모를 입력해 주세요.`;
+    commentInput.placeholder = "공간 메모를 입력해 주세요.";
     setText(saveCommentButton, draft.editingCommentId ? "수정 저장" : "메모 저장");
     toggleClass(cancelCommentButton, "is-hidden", !draft.editingCommentId);
+    setText(detailsConfirmButton, detailCheck?.checked ? "확인 해제" : "확인");
+    toggleClass(detailsConfirmButton, "is-complete", Boolean(detailCheck?.checked));
   } else {
     setText(detailsTitle, "");
     setHtml(checklistItems, "");
-    setHtml(summaryBadges, "");
     setHtml(commentList, "");
     commentInput.value = "";
     toggleClass(cancelCommentButton, "is-hidden", true);
+    setText(detailsConfirmButton, "확인");
+    toggleClass(detailsConfirmButton, "is-complete", false);
+  }
+
+  async function toggleChecklistState(checklistTypeToUpdate) {
+    const alreadyChecked = Boolean(getCurrentCheck(space.id, checklistTypeToUpdate)?.checked);
+
+    if (!alreadyChecked && !getSelectedEmployee()) {
+      window.alert("담당 직원을 먼저 선택해 주세요.");
+      renderSpaces();
+      return;
+    }
+
+    const confirmed = window.confirm(buildChecklistPrompt(space, checklistTypeToUpdate, alreadyChecked));
+    if (!confirmed) {
+      renderSpaces();
+      return;
+    }
+
+    if (alreadyChecked) {
+      await state.repository.saveCurrentCheck({
+        checklist_type: checklistTypeToUpdate,
+        space_id: space.id,
+        space_name: space.name,
+        checked: false,
+        employee_id: null,
+        employee_name: "",
+      });
+      await refresh();
+      return;
+    }
+
+    const employee = getSelectedEmployee();
+    await state.repository.saveCurrentCheck({
+      checklist_type: checklistTypeToUpdate,
+      space_id: space.id,
+      space_name: space.name,
+      checked: true,
+      employee_id: employee.id,
+      employee_name: employee.name,
+    });
+    await refresh();
   }
 
   commentInput.addEventListener("input", (event) => {
-    setCommentDraft(space.id, { text: event.target.value }, checklistType);
+    setCommentDraft(space.id, { text: event.target.value });
   });
 
   Array.from(typeControls.querySelectorAll('[data-action="toggle-detail-type"]')).forEach((button) => {
     button.addEventListener("click", () => {
       const nextType = button.dataset.checklistType ?? "open";
-      state.selectedChecklistType = nextType;
       setOpenDetailsType(space.id, visibleDetailsType === nextType ? "" : nextType);
-      renderOverview();
-      renderChecklistTabs();
-      renderChecklistSummary();
       renderSpaces();
     });
   });
@@ -643,44 +669,8 @@ function buildSpaceCard(space) {
 
     input.addEventListener("change", async () => {
       const checklistTypeToUpdate = input.dataset.checklistType ?? "open";
-      const alreadyChecked = Boolean(getCurrentCheck(space.id, checklistTypeToUpdate)?.checked);
-
       try {
-        state.selectedChecklistType = checklistTypeToUpdate;
-
-        if (!alreadyChecked && !getSelectedEmployee()) {
-          window.alert("담당 직원을 먼저 선택해 주세요.");
-          renderSpaces();
-          return;
-        }
-
-        const confirmed = window.confirm(buildChecklistPrompt(space, checklistTypeToUpdate, alreadyChecked));
-        if (!confirmed) {
-          renderSpaces();
-          return;
-        }
-
-        if (alreadyChecked) {
-          await state.repository.saveCurrentCheck({
-            checklist_type: checklistTypeToUpdate,
-            space_id: space.id,
-            space_name: space.name,
-            checked: false,
-            employee_id: null,
-            employee_name: "",
-          });
-        } else {
-          const employee = getSelectedEmployee();
-          await state.repository.saveCurrentCheck({
-            checklist_type: checklistTypeToUpdate,
-            space_id: space.id,
-            space_name: space.name,
-            checked: true,
-            employee_id: employee.id,
-            employee_name: employee.name,
-          });
-        }
-        await refresh();
+        await toggleChecklistState(checklistTypeToUpdate);
       } catch (error) {
         if (isMissingSupabaseTable(error)) {
           showSchemaHelp(error);
@@ -692,9 +682,24 @@ function buildSpaceCard(space) {
     });
   });
 
+  detailsConfirmButton?.addEventListener("click", async () => {
+    if (!isPanelOpen) return;
+
+    try {
+      await toggleChecklistState(checklistType);
+    } catch (error) {
+      if (isMissingSupabaseTable(error)) {
+        showSchemaHelp(error);
+        return;
+      }
+      window.alert(`확인 상태 저장에 실패했습니다.\n${getErrorMessage(error)}`);
+      renderSpaces();
+    }
+  });
+
   saveCommentButton.addEventListener("click", async () => {
     try {
-      const draftState = getCommentDraft(space.id, checklistType);
+      const draftState = getCommentDraft(space.id);
       const content = draftState.text.trim();
       if (!content) {
         window.alert("메모 내용을 입력해 주세요.");
@@ -715,7 +720,7 @@ function buildSpaceCard(space) {
         });
       } else {
         await state.repository.addCurrentComment({
-          checklist_type: checklistType,
+          checklist_type: "shared",
           space_id: space.id,
           space_name: space.name,
           employee_id: employee.id,
@@ -723,7 +728,7 @@ function buildSpaceCard(space) {
           content,
         });
       }
-      clearCommentDraft(space.id, checklistType);
+      clearCommentDraft(space.id);
       setOpenDetailsType(space.id, checklistType);
       await refresh();
     } catch (error) {
@@ -738,7 +743,7 @@ function buildSpaceCard(space) {
   });
 
   cancelCommentButton.addEventListener("click", () => {
-    clearCommentDraft(space.id, checklistType);
+    clearCommentDraft(space.id);
     setOpenDetailsType(space.id, checklistType);
     renderSpaces();
   });
@@ -751,7 +756,7 @@ function buildSpaceCard(space) {
       setCommentDraft(space.id, {
         text: comment.content,
         editingCommentId: comment.id,
-      }, checklistType);
+      });
       setOpenDetailsType(space.id, checklistType);
       renderSpaces();
     });
@@ -768,8 +773,8 @@ function buildSpaceCard(space) {
 
       try {
         await state.repository.deleteCurrentComment({ commentId });
-        if (getCommentDraft(space.id, checklistType).editingCommentId === commentId) {
-          clearCommentDraft(space.id, checklistType);
+        if (getCommentDraft(space.id).editingCommentId === commentId) {
+          clearCommentDraft(space.id);
         }
         setOpenDetailsType(space.id, checklistType);
         await refresh();
@@ -1054,7 +1059,7 @@ function buildHistoryItemMarkup(entry, comments) {
 function buildHistoryGroupMarkup(title, entries, archiveDate, checklistType) {
   const body = entries.length
     ? entries
-        .map((entry) => buildHistoryItemMarkup(entry, getArchivedComments(archiveDate, checklistType, entry.space_id)))
+        .map((entry) => buildHistoryItemMarkup(entry, getArchivedComments(archiveDate, entry.space_id)))
         .join("")
     : '<div class="empty-state">기록이 없습니다.</div>';
 

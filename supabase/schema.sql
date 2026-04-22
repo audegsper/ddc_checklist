@@ -91,7 +91,7 @@ create table if not exists public.current_comments (
 alter table public.current_comments drop constraint if exists current_comments_checklist_type_check;
 alter table public.current_comments
   add constraint current_comments_checklist_type_check
-  check (checklist_type in ('open', 'always', 'close'));
+  check (checklist_type in ('open', 'always', 'close', 'shared'));
 
 alter table public.current_comments add column if not exists employee_id uuid references public.employees(id) on delete set null;
 alter table public.current_comments add column if not exists employee_name text not null default '';
@@ -146,7 +146,7 @@ create table if not exists public.archived_comments (
 alter table public.archived_comments drop constraint if exists archived_comments_checklist_type_check;
 alter table public.archived_comments
   add constraint archived_comments_checklist_type_check
-  check (checklist_type in ('open', 'always', 'close'));
+  check (checklist_type in ('open', 'always', 'close', 'shared'));
 
 alter table public.archived_comments add column if not exists employee_id uuid references public.employees(id) on delete set null;
 alter table public.archived_comments add column if not exists employee_name text not null default '';
@@ -211,7 +211,7 @@ insert into public.current_comments (
 )
 select
   current_checks.work_date,
-  current_checks.checklist_type,
+  'shared',
   current_checks.space_id,
   current_checks.space_name,
   current_checks.comment_employee_id,
@@ -225,7 +225,6 @@ where coalesce(trim(current_checks.comment), '') <> ''
     select 1
     from public.current_comments
     where public.current_comments.work_date = current_checks.work_date
-      and public.current_comments.checklist_type = current_checks.checklist_type
       and public.current_comments.space_id = current_checks.space_id
       and public.current_comments.content = current_checks.comment
   );
@@ -245,7 +244,7 @@ insert into public.archived_comments (
 )
 select
   archived_checks.archive_date,
-  archived_checks.checklist_type,
+  'shared',
   archived_checks.space_id,
   archived_checks.space_name,
   archived_checks.comment_employee_id,
@@ -261,7 +260,6 @@ where coalesce(trim(archived_checks.comment), '') <> ''
     select 1
     from public.archived_comments
     where public.archived_comments.archive_date = archived_checks.archive_date
-      and public.archived_comments.checklist_type = archived_checks.checklist_type
       and public.archived_comments.space_id = archived_checks.space_id
       and public.archived_comments.content = archived_checks.comment
   );

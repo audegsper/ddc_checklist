@@ -552,8 +552,21 @@ button:hover,
 }
 
 .space-card__name {
+  position: relative;
   flex: 1;
   min-width: 0;
+}
+
+.space-card__name.has-note::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: -12px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #d64b4b;
+  box-shadow: 0 0 0 3px rgba(214, 75, 75, 0.14);
 }
 
 .space-card__header-actions {
@@ -567,8 +580,10 @@ button:hover,
 .space-card__type-control {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 42px;
+  padding: 6px 10px;
   border-radius: 14px;
   background: rgba(28, 42, 37, 0.04);
   border: 1px solid rgba(28, 42, 37, 0.08);
@@ -581,10 +596,13 @@ button:hover,
 
 .space-card__type-button {
   position: relative;
-  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 2px;
   background: transparent;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -592,24 +610,14 @@ button:hover,
   color: var(--primary-strong);
 }
 
-.space-card__type-button.has-note::after {
-  content: "";
-  position: absolute;
-  top: -2px;
-  right: -6px;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--warning-text);
-}
-
 .space-card__checkbox {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
   cursor: pointer;
 }
 
@@ -624,9 +632,9 @@ button:hover,
 .space-card__checkbox-ui {
   position: relative;
   pointer-events: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
   border: 1.5px solid rgba(28, 42, 37, 0.2);
   background: rgba(255, 255, 255, 0.96);
   transition:
@@ -643,10 +651,10 @@ button:hover,
 .space-card__checkbox.is-checked .space-card__checkbox-ui::after {
   content: "";
   position: absolute;
-  top: 2px;
-  left: 5px;
-  width: 5px;
-  height: 9px;
+  top: 3px;
+  left: 6px;
+  width: 6px;
+  height: 10px;
   border-right: 2px solid white;
   border-bottom: 2px solid white;
   transform: rotate(45deg);
