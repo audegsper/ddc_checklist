@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>병원 체크리스트</title>
+    <meta
+      name="description"
+      content="직원별 공간 점검과 메모를 기록하는 모바일 병원 체크리스트"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div class="hero__eyebrow">Daily Duty Checklist</div>
+        <div class="hero__topline">
+          <div>
+            <h1 id="app-title">병원 체크리스트</h1>
+            <p id="today-label" class="hero__date"></p>
+          </div>
+          <div id="sync-pill" class="sync-pill">데모 모드</div>
+        </div>
+        <div class="hero__card">
+          <label class="field">
+            <span class="field__label">현재 담당 직원</span>
+            <select id="employee-select"></select>
+          </label>
+          <p id="employee-help" class="helper-text">먼저 직원을 추가하거나 선택해 주세요.</p>
+        </div>
+      </header>
+
+      <main class="layout">
+        <nav class="tabs" aria-label="앱 섹션">
+          <button class="tab is-active" data-tab="checklist">체크</button>
+          <button class="tab" data-tab="manage">관리</button>
+          <button class="tab" data-tab="history">기록</button>
+          <button class="tab" data-tab="setup">설정</button>
+        </nav>
+
+        <section class="panel is-active" data-panel="checklist">
+          <div class="section-title">
+            <div>
+              <h2>공간 점검</h2>
+              <p>공간별 확인 버튼과 특이사항 메모를 남길 수 있습니다.</p>
+            </div>
+          </div>
+          <div id="spaces-list" class="space-list"></div>
+        </section>
+
+        <section class="panel" data-panel="manage">
+          <div class="section-title">
+            <div>
+              <h2>기본 정보 관리</h2>
+              <p>직원과 공간을 추가하고, 공간별 체크 항목 메모를 정리합니다.</p>
+            </div>
+          </div>
+
+          <div class="card stack">
+            <h3>직원 추가</h3>
+            <form id="employee-form" class="inline-form">
+              <input id="employee-name" type="text" placeholder="예: 김도현" maxlength="30" required />
+              <button type="submit">직원 추가</button>
+            </form>
+            <div id="employee-list" class="chip-row"></div>
+          </div>
+
+          <div class="card stack">
+            <h3>공간 추가</h3>
+            <form id="space-form" class="inline-form">
+              <input id="space-name" type="text" placeholder="예: 대기실" maxlength="40" required />
+              <button type="submit">공간 추가</button>
+            </form>
+            <div id="manage-spaces-list" class="stack"></div>
+          </div>
+        </section>
+
+        <section class="panel" data-panel="history">
+          <div class="section-title">
+            <div>
+              <h2>최근 기록</h2>
+              <p>최근 보관된 체크와 메모 기록을 시간순으로 확인합니다.</p>
+            </div>
+          </div>
+          <div id="history-summary" class="summary-card"></div>
+          <div id="history-list" class="history-list"></div>
+        </section>
+
+        <section class="panel" data-panel="setup">
+          <div class="section-title">
+            <div>
+              <h2>설정</h2>
+              <p>기록 보관 개수와 Supabase 연결 상태를 확인합니다.</p>
+            </div>
+          </div>
+
+          <div class="card stack">
+            <h3>보관 개수</h3>
+            <form id="settings-form" class="settings-form">
+              <label class="field">
+                <span class="field__label">최근 기록 보관 개수</span>
+                <input id="history-limit" type="number" min="1" max="365" step="1" />
+              </label>
+              <button type="submit">설정 저장</button>
+            </form>
+            <p class="helper-text">
+              현재 구현은 최근 기록 개수 기준으로 오래된 항목을 자동 정리합니다.
+            </p>
+          </div>
+
+          <div class="card stack">
+            <h3>Supabase 연결 가이드</h3>
+            <ol class="steps">
+              <li>`supabase/schema.sql`을 SQL Editor에서 실행합니다.</li>
+              <li>`site/app-config.js`에 `supabaseUrl`, `supabaseAnonKey`를 입력합니다.</li>
+              <li>`useSupabase`를 `true`로 바꾸고 페이지를 새로고침합니다.</li>
+              <li>GitHub Secrets에 `SUPABASE_URL`, `SUPABASE_ANON_KEY`를 저장하면 keepalive 워크플로를 사용할 수 있습니다.</li>
+            </ol>
+            <div id="setup-status" class="status-box"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <template id="space-card-template">
+      <article class="space-card">
+        <div class="space-card__header">
+          <div>
+            <p class="space-card__eyebrow">점검 공간</p>
+            <h3 class="space-card__name"></h3>
+          </div>
+          <button class="ghost-button" data-action="confirm">확인</button>
+        </div>
+        <div class="space-card__memo surface">
+          <p class="surface__label">체크 항목</p>
+          <p class="space-card__template"></p>
+        </div>
+        <label class="field">
+          <span class="field__label">특이사항 / 공유 메모</span>
+          <textarea class="space-card__comment" rows="4" placeholder="체크 후 공유할 내용을 적어 주세요."></textarea>
+        </label>
+        <div class="space-card__actions">
+          <button class="secondary-button" data-action="save-comment">메모 저장</button>
+          <p class="space-card__latest helper-text"></p>
+        </div>
+      </article>
+    </template>
+
+    <script src="./app-config.js"></script>
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
+
