@@ -124,7 +124,7 @@ button {
 
 .hero__overview {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: 1fr;
   gap: 12px;
   margin-top: 18px;
 }
@@ -165,7 +165,6 @@ button {
   gap: 6px;
 }
 
-.sync-pill,
 .version-pill {
   padding: 10px 14px;
   border-radius: 999px;
@@ -174,14 +173,17 @@ button {
   white-space: nowrap;
 }
 
-.sync-pill {
-  background: var(--primary-soft);
-  color: var(--primary-strong);
-}
-
 .version-pill {
   background: rgba(28, 42, 37, 0.08);
   color: var(--text);
+}
+
+.hero__meta {
+  justify-content: flex-end;
+}
+
+.hero__meta:empty {
+  display: none;
 }
 
 .hero__card {
@@ -395,6 +397,23 @@ button:hover,
 .chip--removable {
   gap: 8px;
   padding-right: 8px;
+}
+
+.chip--muted {
+  background: rgba(28, 42, 37, 0.06);
+  color: var(--muted);
+  border-color: rgba(28, 42, 37, 0.08);
+}
+
+.employee-choice {
+  border: 1px solid rgba(21, 111, 92, 0.12);
+}
+
+.employee-choice.is-active {
+  background: linear-gradient(180deg, var(--primary), var(--primary-strong));
+  color: white;
+  border-color: transparent;
+  box-shadow: 0 10px 18px rgba(21, 111, 92, 0.18);
 }
 
 .chip__remove {

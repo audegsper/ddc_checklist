@@ -27,16 +27,30 @@ export function formatYearMonth(date) {
   }).format(date);
 }
 
-export function getWorkDate(timezone = "Asia/Seoul") {
+export function getDateKey(date = new Date(), timezone = "Asia/Seoul") {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).formatToParts(new Date());
+  }).formatToParts(date);
 
   const pick = (type) => parts.find((part) => part.type === type)?.value ?? "";
   return `${pick("year")}-${pick("month")}-${pick("day")}`;
+}
+
+export function getWorkDate(timezone = "Asia/Seoul") {
+  return getDateKey(new Date(), timezone);
+}
+
+export function getHourInTimeZone(timezone = "Asia/Seoul", date = new Date()) {
+  return Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour: "2-digit",
+      hour12: false,
+    }).format(date),
+  );
 }
 
 export function createId(prefix = "id") {

@@ -1,4 +1,4 @@
-import { createId, getWorkDate } from "./utils.js";
+import { createId, getDateKey, getHourInTimeZone, getWorkDate } from "./utils.js";
 
 const STORAGE_KEY = "ddc-checklist-state-v4";
 
@@ -89,17 +89,8 @@ function reindexSpaces(state) {
   }));
 }
 
-function toDateKey(date) {
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, "0");
-  const dd = String(date.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function getYesterdayKey(now = new Date()) {
-  const date = new Date(now);
-  date.setDate(now.getDate() - 1);
-  return toDateKey(date);
+function getYesterdayKey(timezone = "Asia/Seoul") {
+  return getDateKey(new Date(Date.now() - 24 * 60 * 60 * 1000), timezone);
 }
 
 function upsertCurrentCheck(state, payload) {
@@ -166,16 +157,15 @@ function finalizeChecklistForDate(state, checklistType, targetDate) {
 }
 
 function autoArchiveIfNeeded(state, timezone = "Asia/Seoul") {
-  const now = new Date();
   const today = getWorkDate(timezone);
-  const hour = now.getHours();
+  const hour = getHourInTimeZone(timezone);
 
   if (hour >= 15 && state.app_settings.last_open_archive_date !== today) {
     finalizeChecklistForDate(state, "open", today);
     state.app_settings.last_open_archive_date = today;
   }
 
-  const yesterday = getYesterdayKey(now);
+  const yesterday = getYesterdayKey(timezone);
   if (state.app_settings.last_close_archive_date !== yesterday) {
     finalizeChecklistForDate(state, "close", yesterday);
     state.app_settings.last_close_archive_date = yesterday;

@@ -7,17 +7,19 @@ import {
   formatKoreanDate,
   formatKoreanDateTime,
   formatYearMonth,
+  getHourInTimeZone,
   getWorkDate,
 } from "./utils.js";
 
-const APP_VERSION = "버전 0.8.1";
+const APP_VERSION = "버전 0.8.2";
 const config = window.__APP_CONFIG__ ?? {};
+const APP_TIMEZONE = config.timezone || "Asia/Seoul";
 
 const state = {
   bootstrap: null,
   selectedEmployeeId: "",
-  selectedChecklistType: new Date().getHours() < 15 ? "open" : "close",
-  selectedDate: getWorkDate(config.timezone || "Asia/Seoul"),
+  selectedChecklistType: getHourInTimeZone(APP_TIMEZONE) < 15 ? "open" : "close",
+  selectedDate: getWorkDate(APP_TIMEZONE),
   calendarMonth: new Date(),
   repository: null,
   setupUnlocked: false,
@@ -30,11 +32,9 @@ function initializeElements() {
   elements = {
     title: document.getElementById("app-title"),
     todayLabel: document.getElementById("today-label"),
-    syncPill: document.getElementById("sync-pill"),
     versionPill: document.getElementById("version-pill"),
     employeeCard: document.getElementById("employee-card"),
-    employeeSelect: document.getElementById("employee-select"),
-    employeeHelp: document.getElementById("employee-help"),
+    employeeButtons: document.getElementById("employee-buttons"),
     spacesList: document.getElementById("spaces-list"),
     employeeForm: document.getElementById("employee-form"),
     employeeName: document.getElementById("employee-name"),
@@ -65,8 +65,6 @@ function initializeElements() {
     closeOverview: document.getElementById("close-overview"),
     openOverviewCount: document.getElementById("open-overview-count"),
     closeOverviewCount: document.getElementById("close-overview-count"),
-    openOverviewTime: document.getElementById("open-overview-time"),
-    closeOverviewTime: document.getElementById("close-overview-time"),
     setupLockCard: document.getElementById("setup-lock-card"),
     setupContent: document.getElementById("setup-content"),
     setupAuthForm: document.getElementById("setup-auth-form"),
@@ -132,12 +130,12 @@ function getSettings() {
 }
 
 function currentFocusType() {
-  return new Date().getHours() < 15 ? "open" : "close";
+  return getHourInTimeZone(APP_TIMEZONE) < 15 ? "open" : "close";
 }
 
 async function createRepository() {
   if (canUseSupabase()) return createSupabaseRepository(config);
-  return createLocalRepository(config.timezone || "Asia/Seoul");
+  return createLocalRepository(APP_TIMEZONE);
 }
 
 function getSelectedEmployee() {
@@ -150,7 +148,7 @@ function getCurrentCheck(spaceId, checklistType = state.selectedChecklistType) {
       (item) =>
         item.space_id === spaceId &&
         item.checklist_type === checklistType &&
-        item.work_date === getWorkDate(config.timezone || "Asia/Seoul"),
+        item.work_date === getWorkDate(APP_TIMEZONE),
     ) ?? null
   );
 }
@@ -201,8 +199,7 @@ async function refresh() {
 
 function renderHeader() {
   setText(elements.title, config.appName || "병원 체크리스트");
-  setText(elements.todayLabel, formatKoreanDate(new Date(), config.timezone || "Asia/Seoul"));
-  setText(elements.syncPill, canUseSupabase() ? "Supabase 연결됨" : "로컬 저장 모드");
+  setText(elements.todayLabel, formatKoreanDate(new Date(), APP_TIMEZONE));
   setText(elements.versionPill, APP_VERSION);
   setText(
     elements.setupStatus,
@@ -219,9 +216,9 @@ function renderOverview() {
 
   setText(elements.openOverviewCount, `확인 ${openStats.checked} · 미확인 ${openStats.unchecked}`);
   setText(elements.closeOverviewCount, `확인 ${closeStats.checked} · 미확인 ${closeStats.unchecked}`);
-  setText(elements.openOverviewTime, focus === "open" ? "지금 집중 대상" : "오후 3시까지 집중");
-  setText(elements.closeOverviewTime, focus === "close" ? "지금 집중 대상" : "오후 3시 이후 집중");
 
+  toggleClass(elements.openOverview, "is-hidden", focus !== "open");
+  toggleClass(elements.closeOverview, "is-hidden", focus !== "close");
   toggleClass(elements.openOverview, "is-active", focus === "open");
   toggleClass(elements.closeOverview, "is-active", focus === "close");
 }
@@ -244,28 +241,35 @@ function renderChecklistTabs() {
 
 function renderEmployees() {
   const employees = state.bootstrap?.employees ?? [];
-  if (elements.employeeSelect) elements.employeeSelect.innerHTML = "";
+  if (elements.employeeButtons) elements.employeeButtons.innerHTML = "";
 
   if (!employees.length) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "직원을 먼저 추가해 주세요";
-    if (elements.employeeSelect) {
-      elements.employeeSelect.append(option);
-      elements.employeeSelect.disabled = true;
-    }
-    setText(elements.employeeHelp, "설정에서 직원을 추가하면 여기에서 선택할 수 있습니다.");
+    setHtml(elements.employeeButtons, '<span class="chip chip--muted">등록된 직원 없음</span>');
     return;
   }
 
-  if (elements.employeeSelect) elements.employeeSelect.disabled = false;
-  setText(elements.employeeHelp, "직원을 선택하면 체크와 메모에 사용됩니다.");
-  employees.forEach((employee) => {
-    const option = document.createElement("option");
-    option.value = employee.id;
-    option.textContent = employee.name;
-    option.selected = employee.id === state.selectedEmployeeId;
-    if (elements.employeeSelect) elements.employeeSelect.append(option);
+  setHtml(
+    elements.employeeButtons,
+    employees
+      .map(
+        (employee) => `
+          <button
+            class="chip employee-choice ${employee.id === state.selectedEmployeeId ? "is-active" : ""}"
+            data-employee-id="${escapeHtml(employee.id)}"
+            type="button"
+          >
+            ${escapeHtml(employee.name)}
+          </button>
+        `,
+      )
+      .join(""),
+  );
+
+  Array.from(elements.employeeButtons?.querySelectorAll("[data-employee-id]") ?? []).forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedEmployeeId = button.dataset.employeeId ?? "";
+      renderEmployees();
+    });
   });
 }
 
@@ -682,7 +686,7 @@ function renderHistory() {
               </span>
             </div>
             <p class="history-item__meta">
-              ${item.checked ? "확인 완료" : "미확인"} · ${ownerText}${formatKoreanDateTime(item.archived_at, config.timezone || "Asia/Seoul")}
+              ${item.checked ? "확인 완료" : "미확인"} · ${ownerText}${formatKoreanDateTime(item.archived_at, APP_TIMEZONE)}
             </p>
             <p class="history-item__body">${escapeHtml(commentText)}</p>
           </article>
@@ -746,14 +750,15 @@ function renderSetupAccess() {
   );
 }
 
+function activatePanel(name) {
+  elements.tabs.forEach((item) => item.classList.toggle("is-active", item.dataset.tab === name));
+  elements.panels.forEach((panel) => panel.classList.toggle("is-active", panel.dataset.panel === name));
+}
+
 function bindTabs() {
   elements.tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
-      const name = tab.dataset.tab;
-      elements.tabs.forEach((item) => item.classList.toggle("is-active", item === tab));
-      elements.panels.forEach((panel) =>
-        panel.classList.toggle("is-active", panel.dataset.panel === name),
-      );
+      activatePanel(tab.dataset.tab);
     });
   });
 
@@ -770,6 +775,7 @@ function bindTabs() {
 
   elements.openOverview?.addEventListener("click", () => {
     state.selectedChecklistType = "open";
+    activatePanel("checklist");
     renderOverview();
     renderChecklistTabs();
     renderChecklistSummary();
@@ -778,6 +784,7 @@ function bindTabs() {
 
   elements.closeOverview?.addEventListener("click", () => {
     state.selectedChecklistType = "close";
+    activatePanel("checklist");
     renderOverview();
     renderChecklistTabs();
     renderChecklistSummary();
@@ -786,10 +793,6 @@ function bindTabs() {
 }
 
 function bindForms() {
-  elements.employeeSelect?.addEventListener("change", (event) => {
-    state.selectedEmployeeId = event.target.value;
-  });
-
   elements.setupAuthForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const password = elements.setupPassword?.value ?? "";
@@ -907,8 +910,8 @@ async function init() {
   try {
     initializeElements();
     renderHeader();
-    state.repository = await createRepository();
     bindTabs();
+    state.repository = await createRepository();
     bindForms();
     await refresh();
   } catch (error) {

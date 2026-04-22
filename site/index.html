@@ -26,8 +26,7 @@
             <p id="today-label" class="hero__date"></p>
           </div>
           <div class="hero__meta">
-            <div id="version-pill" class="version-pill">버전 0.8.1</div>
-            <div id="sync-pill" class="sync-pill">연결 확인 중</div>
+            <div id="version-pill" class="version-pill">버전 0.8.2</div>
           </div>
         </div>
 
@@ -36,32 +35,29 @@
             <div class="overview-card__label">오픈 체크리스트</div>
             <div class="overview-card__stats">
               <strong id="open-overview-count">확인 0 · 미확인 0</strong>
-              <span id="open-overview-time" class="helper-text">오후 3시까지 집중</span>
             </div>
           </button>
           <button id="close-overview" class="overview-card" type="button">
             <div class="overview-card__label">마감 체크리스트</div>
             <div class="overview-card__stats">
               <strong id="close-overview-count">확인 0 · 미확인 0</strong>
-              <span id="close-overview-time" class="helper-text">오후 3시 이후 집중</span>
             </div>
           </button>
         </div>
 
         <div id="employee-card" class="hero__card">
-          <label class="field">
+          <div class="field">
             <span class="field__label">현재 담당 직원</span>
-            <select id="employee-select"></select>
-          </label>
-          <p id="employee-help" class="helper-text">먼저 직원을 추가하거나 선택해 주세요.</p>
+            <div id="employee-buttons" class="chip-row"></div>
+          </div>
         </div>
       </header>
 
       <main class="layout">
         <nav class="tabs" aria-label="앱 섹션">
-          <button class="tab is-active" data-tab="checklist">체크</button>
-          <button class="tab" data-tab="history">기록</button>
-          <button class="tab" data-tab="setup">설정</button>
+          <button class="tab is-active" data-tab="checklist" type="button">체크</button>
+          <button class="tab" data-tab="history" type="button">기록</button>
+          <button class="tab" data-tab="setup" type="button">설정</button>
         </nav>
 
         <section class="panel is-active" data-panel="checklist">
@@ -76,8 +72,8 @@
 
           <div class="summary-card checklist-summary">
             <div class="checklist-switch" role="tablist" aria-label="체크 종류">
-              <button class="hero-tab is-active" data-checklist-type="open">오픈 체크리스트</button>
-              <button class="hero-tab" data-checklist-type="close">마감 체크리스트</button>
+              <button class="hero-tab is-active" data-checklist-type="open" type="button">오픈 체크리스트</button>
+              <button class="hero-tab" data-checklist-type="close" type="button">마감 체크리스트</button>
             </div>
             <div class="checklist-summary__meta">
               <strong id="summary-count">0 / 0 공간 확인 완료</strong>

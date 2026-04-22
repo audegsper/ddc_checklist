@@ -1,4 +1,4 @@
-import { getWorkDate } from "./utils.js";
+import { getDateKey, getHourInTimeZone, getWorkDate } from "./utils.js";
 
 async function loadClient() {
   const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
@@ -25,13 +25,8 @@ function normalizeBootstrap(data) {
   };
 }
 
-function getYesterdayKey(now = new Date()) {
-  const date = new Date(now);
-  date.setDate(now.getDate() - 1);
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, "0");
-  const dd = String(date.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+function getYesterdayKey(timezone = "Asia/Seoul") {
+  return getDateKey(new Date(Date.now() - 24 * 60 * 60 * 1000), timezone);
 }
 
 export async function createSupabaseRepository(config) {
@@ -133,10 +128,9 @@ export async function createSupabaseRepository(config) {
   }
 
   async function autoArchiveIfNeeded() {
-    const now = new Date();
     const today = getWorkDate(timezone);
-    const yesterday = getYesterdayKey(now);
-    const hour = now.getHours();
+    const yesterday = getYesterdayKey(timezone);
+    const hour = getHourInTimeZone(timezone);
 
     const { data: settings, error: settingsError } = await client
       .from("app_settings")
