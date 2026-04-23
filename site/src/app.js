@@ -13,7 +13,7 @@ import {
   getWorkDate,
 } from "./utils.js";
 
-const APP_VERSION = "버전 1.4.0";
+const APP_VERSION = "버전 1.4.1";
 const APP_DISPLAY_NAME = "DD 체크리스트";
 const config = window.__APP_CONFIG__ ?? {};
 const APP_TIMEZONE = config.timezone || "Asia/Seoul";
@@ -656,7 +656,7 @@ function renderChecklistGroupCards(
             ${ownerText ? `<span class="helper-text">${escapeHtml(ownerText)}</span>` : ""}
           </div>
           <div class="detail-group__body">
-            ${group.children?.length ? renderTemplateTreeMarkup(group.children) : '<p class="helper-text">세부 항목이 없습니다.</p>'}
+            ${group.children?.length ? renderTemplateTreeMarkup(group.children) : ""}
           </div>
         </article>
       `;
