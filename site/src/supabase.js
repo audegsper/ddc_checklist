@@ -119,6 +119,13 @@ function removeCategoryFallback(payload, timezone = "Asia/Seoul") {
   writeCategoryFallback(next);
 }
 
+function updateCategoryFallbackSpaceName(spaceId, spaceName) {
+  const next = readCategoryFallback().map((item) =>
+    item.space_id === spaceId ? { ...item, space_name: spaceName } : item,
+  );
+  writeCategoryFallback(next);
+}
+
 function mergeCategoryChecks(serverEntries = [], fallbackEntries = []) {
   const merged = new Map();
   fallbackEntries.forEach((item) => {
@@ -556,8 +563,38 @@ export async function createSupabaseRepository(config) {
     },
 
     async updateSpace(spaceId, patch) {
-      const { error } = await client.from("spaces").update(patch).eq("id", spaceId);
+      const nextPatch = {
+        ...patch,
+        ...(typeof patch.name === "string" ? { name: patch.name.trim() } : {}),
+      };
+      const { error } = await client.from("spaces").update(nextPatch).eq("id", spaceId);
       if (error) throw error;
+
+      if (typeof nextPatch.name === "string" && nextPatch.name) {
+        const nextName = nextPatch.name;
+        const updateJobs = [
+          client.from("current_checks").update({ space_name: nextName }).eq("space_id", spaceId),
+          client.from("current_comments").update({ space_name: nextName }).eq("space_id", spaceId),
+          client.from("archived_checks").update({ space_name: nextName }).eq("space_id", spaceId),
+          client.from("archived_comments").update({ space_name: nextName }).eq("space_id", spaceId),
+        ];
+
+        const results = await Promise.all(updateJobs);
+        results.forEach(({ error: updateError }) => {
+          if (updateError) throw updateError;
+        });
+
+        try {
+          const { error: categoryUpdateError } = await client
+            .from("current_category_checks")
+            .update({ space_name: nextName })
+            .eq("space_id", spaceId);
+          if (categoryUpdateError) throw categoryUpdateError;
+        } catch (error) {
+          if (!isMissingCategoryChecksTable(error)) throw error;
+        }
+        updateCategoryFallbackSpaceName(spaceId, nextName);
+      }
     },
 
     async reorderSpace(spaceId, direction) {

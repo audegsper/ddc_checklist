@@ -13,7 +13,7 @@ import {
   getWorkDate,
 } from "./utils.js";
 
-const APP_VERSION = "버전 1.3.0";
+const APP_VERSION = "버전 1.4.0";
 const APP_DISPLAY_NAME = "DD 체크리스트";
 const config = window.__APP_CONFIG__ ?? {};
 const APP_TIMEZONE = config.timezone || "Asia/Seoul";
@@ -46,12 +46,17 @@ const state = {
   lastPrimaryPanel: "checklist",
   selectedManageSpaceId: "",
   draggedEmployeeId: null,
+  draggedSpaceId: null,
   commentDrafts: {},
   manageOpenDetails: {},
   manageTemplateDrafts: {},
+  manageSpaceNameDrafts: {},
   detailSheet: {
     spaceId: "",
     checklistType: "",
+  },
+  spaceSheet: {
+    spaceId: "",
   },
   notesSheetOpen: false,
   toastTimer: null,
@@ -79,8 +84,6 @@ function initializeElements() {
     spaceName: document.getElementById("space-name"),
     manageSpacesList: document.getElementById("manage-spaces-list"),
     manageSpaceSelection: document.getElementById("manage-space-selection"),
-    spaceMoveUp: document.getElementById("space-move-up"),
-    spaceMoveDown: document.getElementById("space-move-down"),
     historyList: document.getElementById("history-list"),
     historySummary: document.getElementById("history-summary"),
     historyRetentionCopy: document.getElementById("history-retention-copy"),
@@ -116,6 +119,11 @@ function initializeElements() {
     detailSheetTitle: document.getElementById("detail-sheet-title"),
     detailSheetSubtitle: document.getElementById("detail-sheet-subtitle"),
     detailSheetBody: document.getElementById("detail-sheet-body"),
+    spaceSheetBackdrop: document.getElementById("space-sheet-backdrop"),
+    spaceSheetClose: document.getElementById("space-sheet-close"),
+    spaceSheetTitle: document.getElementById("space-sheet-title"),
+    spaceSheetSubtitle: document.getElementById("space-sheet-subtitle"),
+    spaceSheetBody: document.getElementById("space-sheet-body"),
     notesSheetBackdrop: document.getElementById("notes-sheet-backdrop"),
     notesSheetClose: document.getElementById("notes-sheet-close"),
     notesSheetBody: document.getElementById("notes-sheet-body"),
@@ -459,6 +467,18 @@ function clearManageTemplateDraft(spaceId) {
   delete state.manageTemplateDrafts[spaceId];
 }
 
+function getManageSpaceNameDraft(space) {
+  return state.manageSpaceNameDrafts[space.id] ?? space.name;
+}
+
+function setManageSpaceNameDraft(spaceId, name) {
+  state.manageSpaceNameDrafts[spaceId] = name;
+}
+
+function clearManageSpaceNameDraft(spaceId) {
+  delete state.manageSpaceNameDrafts[spaceId];
+}
+
 function isManageDetailsOpen(spaceId) {
   return Boolean(state.manageOpenDetails[spaceId]);
 }
@@ -591,6 +611,159 @@ function renderHistoryCommentsMarkup(comments) {
     .join("");
 }
 
+function renderChecklistGroupCards(
+  space,
+  checklistType,
+  groups,
+  {
+    action = "toggle-category-check",
+    readOnly = false,
+    emptyMessage = "등록된 체크 항목이 없습니다.",
+  } = {},
+) {
+  if (!groups.length) {
+    return `<div class="empty-inline">${escapeHtml(emptyMessage)}</div>`;
+  }
+
+  return groups
+    .map((group) => {
+      const record = checklistType ? getCurrentCategoryCheck(space.id, checklistType, group.id) : null;
+      const ownerText =
+        !readOnly && getSettings().show_employee_name && record?.checked && record.employee_name
+          ? record.employee_name
+          : "";
+
+      return `
+        <article class="detail-group ${readOnly ? "is-readonly" : ""} ${record?.checked ? "is-checked" : ""}">
+          <div class="detail-group__row">
+            ${
+              readOnly
+                ? `<strong class="detail-group__title">${escapeHtml(group.title)}</strong>`
+                : `
+                  <label class="detail-group__check">
+                    <input
+                      data-action="${escapeHtml(action)}"
+                      data-checklist-type="${escapeHtml(checklistType)}"
+                      data-category-key="${escapeHtml(group.id)}"
+                      type="checkbox"
+                      ${record?.checked ? "checked" : ""}
+                    />
+                    <span class="space-card__checkbox-ui detail-group__checkbox-ui" aria-hidden="true"></span>
+                    <span class="detail-group__title">${escapeHtml(group.title)}</span>
+                  </label>
+                `
+            }
+            ${ownerText ? `<span class="helper-text">${escapeHtml(ownerText)}</span>` : ""}
+          </div>
+          <div class="detail-group__body">
+            ${group.children?.length ? renderTemplateTreeMarkup(group.children) : '<p class="helper-text">세부 항목이 없습니다.</p>'}
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function splitChecklistGroups(space, checklistType) {
+  const groups = getChecklistGroups(space, checklistType);
+  return groups.reduce(
+    (result, group) => {
+      if (getCurrentCategoryCheck(space.id, checklistType, group.id)?.checked) {
+        result.completed.push(group);
+      } else {
+        result.pending.push(group);
+      }
+      return result;
+    },
+    { pending: [], completed: [] },
+  );
+}
+
+function renderSharedCommentSection(space, draft, comments) {
+  return `
+    <section class="surface">
+      <p class="surface__label">특이사항 / 공유메모</p>
+      <label class="field">
+        <textarea
+          data-role="shared-comment-input"
+          rows="3"
+          placeholder="공간 메모를 입력해 주세요."
+        >${escapeHtml(draft.text ?? "")}</textarea>
+      </label>
+      <div class="space-card__actions">
+        <button class="secondary-button" data-action="save-sheet-comment" type="button">${draft.editingCommentId ? "수정 저장" : "메모 저장"}</button>
+        <button class="secondary-button is-subtle ${draft.editingCommentId ? "" : "is-hidden"}" data-action="cancel-sheet-comment" type="button">수정 취소</button>
+      </div>
+      <div class="comment-list" data-role="sheet-comment-list">
+        ${renderCurrentCommentsMarkup(comments)}
+      </div>
+    </section>
+  `;
+}
+
+function bindSharedCommentSection(container, space, comments, rerender) {
+  const commentInput = container?.querySelector('[data-role="shared-comment-input"]');
+  commentInput?.addEventListener("input", (event) => {
+    setCommentDraft(space.id, { text: event.target.value });
+  });
+
+  container?.querySelector('[data-action="save-sheet-comment"]')?.addEventListener("click", async () => {
+    try {
+      await saveSpaceComment(space.id);
+      await refresh();
+    } catch (error) {
+      if (isMissingSupabaseTable(error)) {
+        showSchemaHelp(error);
+        return;
+      }
+      window.alert(`메모 저장에 실패했습니다.\n${getErrorMessage(error)}`);
+    }
+  });
+
+  container?.querySelector('[data-action="cancel-sheet-comment"]')?.addEventListener("click", () => {
+    clearCommentDraft(space.id);
+    rerender();
+  });
+
+  Array.from(container?.querySelectorAll('[data-action="edit-comment"]') ?? []).forEach((button) => {
+    button.addEventListener("click", () => {
+      const commentId = button.dataset.commentId;
+      const comment = comments.find((item) => item.id === commentId);
+      if (!comment || !canEditComment(comment)) return;
+      setCommentDraft(space.id, {
+        text: comment.content,
+        editingCommentId: comment.id,
+      });
+      rerender();
+    });
+  });
+
+  Array.from(container?.querySelectorAll('[data-action="delete-comment"]') ?? []).forEach((button) => {
+    button.addEventListener("click", async () => {
+      const commentId = button.dataset.commentId;
+      const comment = comments.find((item) => item.id === commentId);
+      if (!comment || !canEditComment(comment)) return;
+
+      const confirmed = window.confirm("이 메모를 삭제할까요?");
+      if (!confirmed) return;
+
+      try {
+        await state.repository.deleteCurrentComment({ commentId });
+        if (getCommentDraft(space.id).editingCommentId === commentId) {
+          clearCommentDraft(space.id);
+        }
+        await refresh();
+      } catch (error) {
+        if (isMissingSupabaseTable(error)) {
+          showSchemaHelp(error);
+          return;
+        }
+        window.alert(`메모 삭제에 실패했습니다.\n${getErrorMessage(error)}`);
+      }
+    });
+  });
+}
+
 function getRecentNoteEntries(days = RECENT_NOTE_DAYS) {
   const cutoff = getDateKey(new Date(Date.now() - (days - 1) * 24 * 60 * 60 * 1000), APP_TIMEZONE);
   const currentNotes = (state.bootstrap?.current_comments ?? []).map((comment) => ({
@@ -644,6 +817,14 @@ function openDetailSheet(spaceId, checklistType) {
     closeDetailSheet();
     return;
   }
+  if (state.notesSheetOpen) {
+    closeNotesSheet();
+  }
+  if (state.spaceSheet.spaceId) {
+    state.spaceSheet = { spaceId: "" };
+    toggleClass(elements.spaceSheetBackdrop, "is-hidden", true);
+    if (elements.spaceSheetBody) elements.spaceSheetBody.innerHTML = "";
+  }
   state.detailSheet = { spaceId, checklistType };
   renderSpaces();
   renderDetailSheet();
@@ -656,7 +837,38 @@ function closeDetailSheet() {
   if (state.bootstrap) renderSpaces();
 }
 
+function openSpaceSheet(spaceId) {
+  if (state.spaceSheet.spaceId === spaceId) {
+    closeSpaceSheet();
+    return;
+  }
+  if (state.notesSheetOpen) {
+    closeNotesSheet();
+  }
+  if (state.detailSheet.spaceId) {
+    state.detailSheet = { spaceId: "", checklistType: "" };
+    toggleClass(elements.detailSheetBackdrop, "is-hidden", true);
+    if (elements.detailSheetBody) elements.detailSheetBody.innerHTML = "";
+  }
+  state.spaceSheet = { spaceId };
+  renderSpaces();
+  renderSpaceSheet();
+}
+
+function closeSpaceSheet() {
+  state.spaceSheet = { spaceId: "" };
+  toggleClass(elements.spaceSheetBackdrop, "is-hidden", true);
+  if (elements.spaceSheetBody) elements.spaceSheetBody.innerHTML = "";
+  if (state.bootstrap) renderSpaces();
+}
+
 function openNotesSheet() {
+  if (state.detailSheet.spaceId) {
+    closeDetailSheet();
+  }
+  if (state.spaceSheet.spaceId) {
+    closeSpaceSheet();
+  }
   state.notesSheetOpen = true;
   renderNotesSheet();
 }
@@ -716,8 +928,16 @@ async function refresh() {
       clearManageTemplateDraft(spaceId);
     }
   });
+  Object.keys(state.manageSpaceNameDrafts).forEach((spaceId) => {
+    if (!activeSpaces.some((item) => item.id === spaceId)) {
+      clearManageSpaceNameDraft(spaceId);
+    }
+  });
   if (state.detailSheet.spaceId && !activeSpaces.some((item) => item.id === state.detailSheet.spaceId)) {
     closeDetailSheet();
+  }
+  if (state.spaceSheet.spaceId && !activeSpaces.some((item) => item.id === state.spaceSheet.spaceId)) {
+    closeSpaceSheet();
   }
 
   renderHeader();
@@ -730,6 +950,7 @@ async function refresh() {
   renderSettings();
   renderSetupAccess();
   renderDetailSheet();
+  renderSpaceSheet();
   renderNotesSheet();
   activatePanel(state.activePanel);
   setLoading(false);
@@ -752,19 +973,36 @@ function renderHeader() {
 
 function renderOverview() {
   const notes = getRecentNoteEntries();
-  const tickerMarkup = notes.length
-    ? [...notes.slice(0, 10), ...notes.slice(0, 10)]
+  const visibleNotes = notes.slice(0, 8);
+  const cycleNotes = visibleNotes.length > 1 ? [...visibleNotes, ...visibleNotes] : visibleNotes;
+  const tickerMarkup = visibleNotes.length
+    ? cycleNotes
         .map(
           (comment) => `
-            <span class="ticker-card__item">${escapeHtml(formatRecentNoteLine(comment))}</span>
+            <span class="ticker-card__item">
+              <span class="ticker-card__item-text">${escapeHtml(formatRecentNoteLine(comment))}</span>
+            </span>
           `,
         )
         .join("")
     : '<span class="ticker-card__empty">등록된 메모가 없습니다.</span>';
 
   setHtml(elements.notesTickerTrack, tickerMarkup);
-  toggleClass(elements.notesTickerTrack, "is-animated", notes.length > 1);
-  if (elements.notesTickerButton) elements.notesTickerButton.disabled = !notes.length;
+  if (elements.notesTickerTrack) {
+    elements.notesTickerTrack.style.removeProperty("--ticker-steps");
+    elements.notesTickerTrack.style.removeProperty("--ticker-duration");
+    elements.notesTickerTrack.style.animationTimingFunction = "";
+    if (visibleNotes.length > 1) {
+      elements.notesTickerTrack.style.setProperty("--ticker-steps", String(visibleNotes.length));
+      elements.notesTickerTrack.style.setProperty(
+        "--ticker-duration",
+        `${Math.max(visibleNotes.length * 3.2, 8)}s`,
+      );
+      elements.notesTickerTrack.style.animationTimingFunction = `steps(${visibleNotes.length})`;
+    }
+  }
+  toggleClass(elements.notesTickerTrack, "is-animated", visibleNotes.length > 1);
+  if (elements.notesTickerButton) elements.notesTickerButton.disabled = !visibleNotes.length;
 }
 
 function renderChecklistTabs() {
@@ -954,7 +1192,11 @@ function buildSpaceCard(space) {
 
   setHtml(
     name,
-    `<span class="space-card__name-text ${comments.length ? "has-note" : ""}">${escapeHtml(space.name)}</span>`,
+    `
+      <button class="space-card__name-button" data-action="open-space-sheet" type="button">
+        <span class="space-card__name-text ${comments.length ? "has-note" : ""}">${escapeHtml(space.name)}</span>
+      </button>
+    `,
   );
 
   const ownerText = buildOwnerText(space, state.selectedChecklistType);
@@ -999,6 +1241,10 @@ function buildSpaceCard(space) {
     button.addEventListener("click", () => {
       openDetailSheet(space.id, button.dataset.checklistType ?? "open");
     });
+  });
+
+  name.querySelector('[data-action="open-space-sheet"]')?.addEventListener("click", () => {
+    openSpaceSheet(space.id);
   });
 
   Array.from(typeControls.querySelectorAll('[data-action="toggle-summary-check"]')).forEach((input) => {
@@ -1047,56 +1293,6 @@ function renderDetailSheet() {
   setText(elements.detailSheetSubtitle, `${getChecklistLabel(checklistType)} 체크 항목과 상시 체크 항목을 함께 확인합니다.`);
   toggleClass(elements.detailSheetBackdrop, "is-hidden", false);
 
-  const checkableMarkup = checklistGroups.length
-    ? checklistGroups
-        .map((group) => {
-          const record = getCurrentCategoryCheck(space.id, checklistType, group.id);
-          const ownerText =
-            getSettings().show_employee_name && record?.checked && record.employee_name
-              ? record.employee_name
-              : "";
-
-          return `
-            <article class="detail-group">
-              <div class="detail-group__row">
-                <label class="detail-group__check">
-                  <input
-                    data-action="toggle-category-check"
-                    data-category-key="${escapeHtml(group.id)}"
-                    type="checkbox"
-                    ${record?.checked ? "checked" : ""}
-                  />
-                  <span class="space-card__checkbox-ui detail-group__checkbox-ui" aria-hidden="true"></span>
-                  <span class="detail-group__title">${escapeHtml(group.title)}</span>
-                </label>
-                ${ownerText ? `<span class="helper-text">${escapeHtml(ownerText)}</span>` : ""}
-              </div>
-              <div class="detail-group__body">
-                ${group.children?.length ? renderTemplateTreeMarkup(group.children) : '<p class="helper-text">세부 항목이 없습니다.</p>'}
-              </div>
-            </article>
-          `;
-        })
-        .join("")
-    : '<div class="empty-inline">등록된 대분류가 없습니다.</div>';
-
-  const alwaysMarkup = alwaysGroups.length
-    ? alwaysGroups
-        .map(
-          (group) => `
-            <article class="detail-group is-readonly">
-              <div class="detail-group__row">
-                <strong class="detail-group__title">${escapeHtml(group.title)}</strong>
-              </div>
-              <div class="detail-group__body">
-                ${group.children?.length ? renderTemplateTreeMarkup(group.children) : '<p class="helper-text">세부 항목이 없습니다.</p>'}
-              </div>
-            </article>
-          `,
-        )
-        .join("")
-    : '<div class="empty-inline">등록된 상시 체크 항목이 없습니다.</div>';
-
   setHtml(
     elements.detailSheetBody,
     `
@@ -1104,40 +1300,25 @@ function renderDetailSheet() {
         <section class="surface">
           <p class="surface__label">${escapeHtml(getChecklistLabel(checklistType))} 체크 항목</p>
           <div class="stack">
-            ${checkableMarkup}
+            ${renderChecklistGroupCards(space, checklistType, checklistGroups, {
+              action: "toggle-category-check",
+              emptyMessage: "등록된 대분류가 없습니다.",
+            })}
           </div>
         </section>
         <section class="surface">
           <p class="surface__label">상시 체크 항목</p>
           <div class="stack">
-            ${alwaysMarkup}
+            ${renderChecklistGroupCards(space, "", alwaysGroups, {
+              readOnly: true,
+              emptyMessage: "등록된 상시 체크 항목이 없습니다.",
+            })}
           </div>
         </section>
-        <section class="surface">
-          <p class="surface__label">특이사항 / 공유메모</p>
-          <label class="field">
-            <textarea
-              id="detail-sheet-comment"
-              rows="3"
-              placeholder="공간 메모를 입력해 주세요."
-            >${escapeHtml(draft.text ?? "")}</textarea>
-          </label>
-          <div class="space-card__actions">
-            <button class="secondary-button" data-action="save-sheet-comment" type="button">${draft.editingCommentId ? "수정 저장" : "메모 저장"}</button>
-            <button class="secondary-button is-subtle ${draft.editingCommentId ? "" : "is-hidden"}" data-action="cancel-sheet-comment" type="button">수정 취소</button>
-          </div>
-          <div class="comment-list" data-role="sheet-comment-list">
-            ${renderCurrentCommentsMarkup(comments)}
-          </div>
-        </section>
+        ${renderSharedCommentSection(space, draft, comments)}
       </div>
     `,
   );
-
-  const commentInput = elements.detailSheetBody?.querySelector("#detail-sheet-comment");
-  commentInput?.addEventListener("input", (event) => {
-    setCommentDraft(space.id, { text: event.target.value });
-  });
 
   Array.from(elements.detailSheetBody?.querySelectorAll('[data-action="toggle-category-check"]') ?? []).forEach((input) => {
     input.addEventListener("change", async () => {
@@ -1157,62 +1338,122 @@ function renderDetailSheet() {
       }
     });
   });
+  bindSharedCommentSection(elements.detailSheetBody, space, comments, renderDetailSheet);
+}
 
-  elements.detailSheetBody?.querySelector('[data-action="save-sheet-comment"]')?.addEventListener("click", async () => {
-    try {
-      await saveSpaceComment(space.id);
-      await refresh();
-    } catch (error) {
-      if (isMissingSupabaseTable(error)) {
-        showSchemaHelp(error);
-        return;
-      }
-      window.alert(`메모 저장에 실패했습니다.\n${getErrorMessage(error)}`);
-    }
-  });
+function renderSpaceSheet() {
+  const { spaceId } = state.spaceSheet;
+  if (!spaceId) {
+    closeSpaceSheet();
+    return;
+  }
 
-  elements.detailSheetBody?.querySelector('[data-action="cancel-sheet-comment"]')?.addEventListener("click", () => {
-    clearCommentDraft(space.id);
-    renderDetailSheet();
-  });
+  const space = state.bootstrap?.spaces.find((item) => item.id === spaceId);
+  if (!space) {
+    closeSpaceSheet();
+    return;
+  }
 
-  Array.from(elements.detailSheetBody?.querySelectorAll('[data-action="edit-comment"]') ?? []).forEach((button) => {
-    button.addEventListener("click", () => {
-      const commentId = button.dataset.commentId;
-      const comment = comments.find((item) => item.id === commentId);
-      if (!comment || !canEditComment(comment)) return;
-      setCommentDraft(space.id, {
-        text: comment.content,
-        editingCommentId: comment.id,
-      });
-      renderDetailSheet();
-    });
-  });
+  const alwaysGroups = getChecklistGroups(space, "always");
+  const openBuckets = splitChecklistGroups(space, "open");
+  const closeBuckets = splitChecklistGroups(space, "close");
+  const comments = getCurrentComments(space.id);
+  const draft = getCommentDraft(space.id);
 
-  Array.from(elements.detailSheetBody?.querySelectorAll('[data-action="delete-comment"]') ?? []).forEach((button) => {
-    button.addEventListener("click", async () => {
-      const commentId = button.dataset.commentId;
-      const comment = comments.find((item) => item.id === commentId);
-      if (!comment || !canEditComment(comment)) return;
+  setText(elements.spaceSheetTitle, space.name);
+  setText(elements.spaceSheetSubtitle, "상시 항목과 오픈/마감 대분류 진행 상태를 한 번에 확인합니다.");
+  toggleClass(elements.spaceSheetBackdrop, "is-hidden", false);
 
-      const confirmed = window.confirm("이 메모를 삭제할까요?");
-      if (!confirmed) return;
+  setHtml(
+    elements.spaceSheetBody,
+    `
+      <div class="sheet-stack">
+        <section class="surface">
+          <div class="surface__header">
+            <p class="surface__label">상시 체크 항목</p>
+            <span class="summary-badge">${alwaysGroups.length}</span>
+          </div>
+          <div class="stack">
+            ${renderChecklistGroupCards(space, "", alwaysGroups, {
+              readOnly: true,
+              emptyMessage: "등록된 상시 체크 항목이 없습니다.",
+            })}
+          </div>
+        </section>
+        <section class="surface">
+          <div class="surface__header">
+            <p class="surface__label">오픈 체크 항목 · 체크가 필요한 곳</p>
+            <span class="summary-badge">${openBuckets.pending.length}</span>
+          </div>
+          <div class="stack">
+            ${renderChecklistGroupCards(space, "open", openBuckets.pending, {
+              action: "toggle-space-sheet-category",
+              emptyMessage: "체크가 필요한 오픈 항목이 없습니다.",
+            })}
+          </div>
+        </section>
+        <section class="surface">
+          <div class="surface__header">
+            <p class="surface__label">마감 체크 항목 · 체크가 필요한 곳</p>
+            <span class="summary-badge">${closeBuckets.pending.length}</span>
+          </div>
+          <div class="stack">
+            ${renderChecklistGroupCards(space, "close", closeBuckets.pending, {
+              action: "toggle-space-sheet-category",
+              emptyMessage: "체크가 필요한 마감 항목이 없습니다.",
+            })}
+          </div>
+        </section>
+        <section class="surface">
+          <div class="surface__header">
+            <p class="surface__label">오픈 체크 항목 · 체크를 완료한 곳</p>
+            <span class="summary-badge">${openBuckets.completed.length}</span>
+          </div>
+          <div class="stack">
+            ${renderChecklistGroupCards(space, "open", openBuckets.completed, {
+              action: "toggle-space-sheet-category",
+              emptyMessage: "완료된 오픈 항목이 없습니다.",
+            })}
+          </div>
+        </section>
+        <section class="surface">
+          <div class="surface__header">
+            <p class="surface__label">마감 체크 항목 · 체크를 완료한 곳</p>
+            <span class="summary-badge">${closeBuckets.completed.length}</span>
+          </div>
+          <div class="stack">
+            ${renderChecklistGroupCards(space, "close", closeBuckets.completed, {
+              action: "toggle-space-sheet-category",
+              emptyMessage: "완료된 마감 항목이 없습니다.",
+            })}
+          </div>
+        </section>
+        ${renderSharedCommentSection(space, draft, comments)}
+      </div>
+    `,
+  );
+
+  Array.from(elements.spaceSheetBody?.querySelectorAll('[data-action="toggle-space-sheet-category"]') ?? []).forEach((input) => {
+    input.addEventListener("change", async () => {
+      const checklistType = input.dataset.checklistType ?? "open";
+      const categoryKey = input.dataset.categoryKey ?? "";
+      const group = getChecklistGroups(space, checklistType).find((item) => item.id === categoryKey);
+      if (!group) return;
 
       try {
-        await state.repository.deleteCurrentComment({ commentId });
-        if (getCommentDraft(space.id).editingCommentId === commentId) {
-          clearCommentDraft(space.id);
-        }
+        await toggleChecklistCategory(space, checklistType, group);
         await refresh();
       } catch (error) {
         if (isMissingSupabaseTable(error)) {
           showSchemaHelp(error);
           return;
         }
-        window.alert(`메모 삭제에 실패했습니다.\n${getErrorMessage(error)}`);
+        window.alert(`대분류 체크 저장에 실패했습니다.\n${getErrorMessage(error)}`);
       }
     });
   });
+
+  bindSharedCommentSection(elements.spaceSheetBody, space, comments, renderSpaceSheet);
 }
 
 function renderNotesSheet() {
@@ -1477,30 +1718,23 @@ function renderEmployeeManager() {
 }
 
 function renderManageSpaces() {
-  const spaces = state.bootstrap?.spaces ?? [];
+  const spaces = sortChecklistSpaces(state.bootstrap?.spaces ?? []);
   if (elements.manageSpacesList) elements.manageSpacesList.innerHTML = "";
 
   if (!spaces.length) {
     setHtml(elements.manageSpacesList, '<div class="empty-state">공간을 추가하면 이곳에서 관리할 수 있습니다.</div>');
-    setText(elements.manageSpaceSelection, "순서를 바꿀 공간을 먼저 선택해 주세요.");
-    if (elements.spaceMoveUp) elements.spaceMoveUp.disabled = true;
-    if (elements.spaceMoveDown) elements.spaceMoveDown.disabled = true;
+    setText(elements.manageSpaceSelection, "등록된 공간은 이름을 수정하거나 왼쪽 핸들로 드래그해서 순서를 바꿀 수 있습니다.");
     return;
   }
 
-  const selectedIndex = spaces.findIndex((space) => space.id === state.selectedManageSpaceId);
-  const selectedSpace = spaces[selectedIndex] ?? null;
   setText(
     elements.manageSpaceSelection,
-    selectedSpace
-      ? `${selectedSpace.name} 공간이 선택되었습니다. 위아래 화살표로 순서를 바꿀 수 있습니다.`
-      : "순서를 바꿀 공간을 먼저 선택해 주세요.",
+    "등록된 공간은 이름을 수정하거나 왼쪽 핸들로 드래그해서 순서를 바꿀 수 있습니다.",
   );
-  if (elements.spaceMoveUp) elements.spaceMoveUp.disabled = selectedIndex <= 0;
-  if (elements.spaceMoveDown) elements.spaceMoveDown.disabled = selectedIndex < 0 || selectedIndex >= spaces.length - 1;
 
   spaces.forEach((space) => {
     const draft = getManageTemplateDraft(space);
+    const nameDraft = getManageSpaceNameDraft(space);
     const totalItemCount =
       countTemplateNodes(draft.open) +
       countTemplateNodes(draft.always) +
@@ -1508,11 +1742,20 @@ function renderManageSpaces() {
     const wrapper = document.createElement("article");
     wrapper.className = "manage-space-card";
     wrapper.dataset.spaceId = space.id;
-    toggleClass(wrapper, "is-selected", space.id === state.selectedManageSpaceId);
 
     wrapper.innerHTML = `
       <div class="manage-space-card__summary-row">
-        <h4>${escapeHtml(space.name)}</h4>
+        <div class="manage-space-card__title">
+          <span class="manage-item__handle manage-space-card__handle" data-role="space-drag-handle" draggable="true">&#8942;&#8942;</span>
+          <input
+            class="manage-space-card__name-input"
+            data-role="space-name-input"
+            type="text"
+            value="${escapeHtml(nameDraft)}"
+            placeholder="공간 이름"
+            maxlength="40"
+          />
+        </div>
         <button class="tiny-button is-danger" data-role="delete-space" type="button">삭제</button>
       </div>
       <details>
@@ -1533,6 +1776,8 @@ function renderManageSpaces() {
 
     const saveButton = wrapper.querySelector('[data-role="save-space"]');
     const deleteButton = wrapper.querySelector('[data-role="delete-space"]');
+    const nameInput = wrapper.querySelector('[data-role="space-name-input"]');
+    const dragHandle = wrapper.querySelector('[data-role="space-drag-handle"]');
     const details = wrapper.querySelector("details");
 
     details.open = isManageDetailsOpen(space.id);
@@ -1540,10 +1785,8 @@ function renderManageSpaces() {
       setManageDetailsOpen(space.id, details.open);
     });
 
-    wrapper.addEventListener("click", (event) => {
-      if (event.target.closest("input, textarea, button, summary")) return;
-      state.selectedManageSpaceId = space.id;
-      renderManageSpaces();
+    nameInput?.addEventListener("input", () => {
+      setManageSpaceNameDraft(space.id, nameInput.value);
     });
 
     Array.from(wrapper.querySelectorAll('[data-action="update-template-node"]')).forEach((input) => {
@@ -1613,14 +1856,21 @@ function renderManageSpaces() {
 
     saveButton.addEventListener("click", async () => {
       try {
+        const nextName = (getManageSpaceNameDraft(space) || "").trim();
+        if (!nextName) {
+          window.alert("공간 이름을 입력해 주세요.");
+          return;
+        }
         saveButton.disabled = true;
         const nextDraft = getManageTemplateDraft(space);
         await state.repository.updateSpace(space.id, {
+          name: nextName,
           open_checklist_template: serializeTemplateData(nextDraft.open),
           always_checklist_template: serializeTemplateData(nextDraft.always),
           close_checklist_template: serializeTemplateData(nextDraft.close),
         });
         clearManageTemplateDraft(space.id);
+        clearManageSpaceNameDraft(space.id);
         setManageDetailsOpen(space.id, true);
         await refresh();
       } catch (error) {
@@ -1640,6 +1890,49 @@ function renderManageSpaces() {
         await refresh();
       } catch (error) {
         window.alert(`공간 삭제에 실패했습니다.\n${getErrorMessage(error)}`);
+      }
+    });
+
+    dragHandle?.addEventListener("dragstart", () => {
+      state.draggedSpaceId = space.id;
+      wrapper.classList.add("is-dragging");
+    });
+
+    dragHandle?.addEventListener("dragend", () => {
+      state.draggedSpaceId = null;
+      wrapper.classList.remove("is-dragging");
+    });
+
+    wrapper.addEventListener("dragover", (event) => {
+      event.preventDefault();
+    });
+
+    wrapper.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      const targetId = wrapper.dataset.spaceId ?? "";
+      if (!state.draggedSpaceId || state.draggedSpaceId === targetId) return;
+
+      const currentIds = spaces.map((item) => item.id);
+      const fromIndex = currentIds.indexOf(state.draggedSpaceId);
+      const toIndex = currentIds.indexOf(targetId);
+      if (fromIndex < 0 || toIndex < 0) return;
+
+      const nextIds = [...currentIds];
+      const [moved] = nextIds.splice(fromIndex, 1);
+      nextIds.splice(toIndex, 0, moved);
+
+      try {
+        await animateListReorder(
+          elements.manageSpacesList,
+          "[data-space-id]",
+          "spaceId",
+          async () => {
+            await state.repository.saveSpaceOrder(nextIds);
+            await refresh();
+          },
+        );
+      } catch (error) {
+        window.alert(`공간 순서 변경에 실패했습니다.\n${getErrorMessage(error)}`);
       }
     });
 
@@ -1900,9 +2193,13 @@ function bindForms() {
   elements.setupOpenButton?.addEventListener("click", openSetup);
   elements.setupCloseButton?.addEventListener("click", closeSetup);
   elements.detailSheetClose?.addEventListener("click", closeDetailSheet);
+  elements.spaceSheetClose?.addEventListener("click", closeSpaceSheet);
   elements.notesSheetClose?.addEventListener("click", closeNotesSheet);
   elements.detailSheetBackdrop?.addEventListener("click", (event) => {
     if (event.target === elements.detailSheetBackdrop) closeDetailSheet();
+  });
+  elements.spaceSheetBackdrop?.addEventListener("click", (event) => {
+    if (event.target === elements.spaceSheetBackdrop) closeSpaceSheet();
   });
   elements.notesSheetBackdrop?.addEventListener("click", (event) => {
     if (event.target === elements.notesSheetBackdrop) closeNotesSheet();

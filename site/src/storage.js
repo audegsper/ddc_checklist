@@ -440,7 +440,33 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
 
     async updateSpace(spaceId, patch) {
       const state = readState();
-      state.spaces = state.spaces.map((space) => (space.id === spaceId ? { ...space, ...patch } : space));
+      const nextName = typeof patch.name === "string" ? patch.name.trim() : null;
+      state.spaces = state.spaces.map((space) =>
+        space.id === spaceId
+          ? {
+              ...space,
+              ...patch,
+              ...(nextName ? { name: nextName } : {}),
+            }
+          : space,
+      );
+      if (nextName) {
+        state.current_category_checks = state.current_category_checks.map((item) =>
+          item.space_id === spaceId ? { ...item, space_name: nextName } : item,
+        );
+        state.current_checks = state.current_checks.map((item) =>
+          item.space_id === spaceId ? { ...item, space_name: nextName } : item,
+        );
+        state.current_comments = state.current_comments.map((item) =>
+          item.space_id === spaceId ? { ...item, space_name: nextName } : item,
+        );
+        state.archived_checks = state.archived_checks.map((item) =>
+          item.space_id === spaceId ? { ...item, space_name: nextName } : item,
+        );
+        state.archived_comments = state.archived_comments.map((item) =>
+          item.space_id === spaceId ? { ...item, space_name: nextName } : item,
+        );
+      }
       reindexSpaces(state);
       writeState(state);
     },
