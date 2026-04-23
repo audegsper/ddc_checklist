@@ -3,30 +3,35 @@ import { createSupabaseRepository } from "./supabase.js";
 import {
   addMonths,
   buildCalendarDays,
+  createId,
   escapeHtml,
   formatKoreanDate,
   formatKoreanDateTime,
   formatYearMonth,
+  getDateKey,
   getTimePartsInTimeZone,
   getWorkDate,
 } from "./utils.js";
 
-const APP_VERSION = "버전 1.1.1";
+const APP_VERSION = "버전 1.3.0";
 const APP_DISPLAY_NAME = "DD 체크리스트";
 const config = window.__APP_CONFIG__ ?? {};
 const APP_TIMEZONE = config.timezone || "Asia/Seoul";
 const OPEN_ALERT_STORAGE_KEY = "ddc-checklist-open-alert-date";
 const CHECKLIST_TYPES = [
   { id: "open", label: "오픈", templateKey: "open_checklist_template" },
+  { id: "close", label: "마감", templateKey: "close_checklist_template" },
+];
+const TEMPLATE_TYPES = [
+  { id: "open", label: "오픈", templateKey: "open_checklist_template" },
   { id: "always", label: "상시", templateKey: "always_checklist_template" },
   { id: "close", label: "마감", templateKey: "close_checklist_template" },
 ];
+const RECENT_NOTE_DAYS = 7;
 
 function getChecklistTypeByTime(date = new Date()) {
   const { hour } = getTimePartsInTimeZone(APP_TIMEZONE, date);
-  if (hour < 13) return "open";
-  if (hour < 18) return "always";
-  return "close";
+  return hour < 18 ? "open" : "close";
 }
 
 const state = {
@@ -42,8 +47,14 @@ const state = {
   selectedManageSpaceId: "",
   draggedEmployeeId: null,
   commentDrafts: {},
-  openDetails: {},
   manageOpenDetails: {},
+  manageTemplateDrafts: {},
+  detailSheet: {
+    spaceId: "",
+    checklistType: "",
+  },
+  notesSheetOpen: false,
+  toastTimer: null,
   openAlertTimer: null,
   hasBootstrapped: false,
 };
@@ -89,12 +100,8 @@ function initializeElements() {
     checklistDescription: document.getElementById("checklist-description"),
     summaryCount: document.getElementById("summary-count"),
     summaryCaption: document.getElementById("summary-caption"),
-    openOverview: document.getElementById("open-overview"),
-    alwaysOverview: document.getElementById("always-overview"),
-    closeOverview: document.getElementById("close-overview"),
-    openOverviewCount: document.getElementById("open-overview-count"),
-    alwaysOverviewCount: document.getElementById("always-overview-count"),
-    closeOverviewCount: document.getElementById("close-overview-count"),
+    notesTickerButton: document.getElementById("notes-ticker-button"),
+    notesTickerTrack: document.getElementById("notes-ticker-track"),
     setupLockCard: document.getElementById("setup-lock-card"),
     setupContent: document.getElementById("setup-content"),
     setupAuthForm: document.getElementById("setup-auth-form"),
@@ -104,6 +111,15 @@ function initializeElements() {
     passwordForm: document.getElementById("password-form"),
     currentPassword: document.getElementById("current-password"),
     newPassword: document.getElementById("new-password"),
+    detailSheetBackdrop: document.getElementById("detail-sheet-backdrop"),
+    detailSheetClose: document.getElementById("detail-sheet-close"),
+    detailSheetTitle: document.getElementById("detail-sheet-title"),
+    detailSheetSubtitle: document.getElementById("detail-sheet-subtitle"),
+    detailSheetBody: document.getElementById("detail-sheet-body"),
+    notesSheetBackdrop: document.getElementById("notes-sheet-backdrop"),
+    notesSheetClose: document.getElementById("notes-sheet-close"),
+    notesSheetBody: document.getElementById("notes-sheet-body"),
+    toast: document.getElementById("app-toast"),
   };
 }
 
@@ -165,10 +181,6 @@ function getSettings() {
   );
 }
 
-function currentFocusType() {
-  return getChecklistTypeByTime();
-}
-
 async function createRepository() {
   if (canUseSupabase()) return createSupabaseRepository(config);
   return createLocalRepository(APP_TIMEZONE);
@@ -210,27 +222,193 @@ function getArchivedComments(archiveDate, spaceId) {
 }
 
 function getChecklistLabel(type = state.selectedChecklistType) {
-  return CHECKLIST_TYPES.find((item) => item.id === type)?.label ?? "오픈";
+  return TEMPLATE_TYPES.find((item) => item.id === type)?.label ?? "오픈";
 }
 
 function getChecklistConfig(type = state.selectedChecklistType) {
-  return CHECKLIST_TYPES.find((item) => item.id === type) ?? CHECKLIST_TYPES[0];
+  return TEMPLATE_TYPES.find((item) => item.id === type) ?? TEMPLATE_TYPES[0];
 }
 
 function getChecklistTemplate(space, type = state.selectedChecklistType) {
   return space?.[getChecklistConfig(type).templateKey] ?? "";
 }
 
-function getChecklistItems(space, type = state.selectedChecklistType) {
-  return getChecklistTemplate(space, type)
+function createTemplateNode(level = "major") {
+  return {
+    id: createId(`template_${level}`),
+    title: "",
+    children: [],
+  };
+}
+
+function normalizeTemplateNodes(nodes, type, depth = 0, parentKey = "root") {
+  if (!Array.isArray(nodes)) return [];
+
+  return nodes
+    .map((node, index) => {
+      const id = String(node?.id ?? `legacy_${type}_${parentKey}_${index}`);
+      const title = String(node?.title ?? node?.name ?? "").trim();
+      const children =
+        depth < 2 ? normalizeTemplateNodes(node?.children ?? [], type, depth + 1, id) : [];
+
+      if (!title && !children.length) return null;
+      return { id, title, children };
+    })
+    .filter(Boolean);
+}
+
+function parseTemplateData(rawValue, type = "open") {
+  const value = String(rawValue ?? "").trim();
+  if (!value) return [];
+
+  try {
+    const parsed = JSON.parse(value);
+    const groups = Array.isArray(parsed) ? parsed : parsed?.groups;
+    if (Array.isArray(groups)) {
+      return normalizeTemplateNodes(groups, type);
+    }
+  } catch {
+    // legacy line-based format
+  }
+
+  const lines = value
     .split("\n")
     .map((item) => item.trim())
     .filter(Boolean);
+  if (!lines.length) return [];
+
+  return [
+    {
+      id: `legacy_${type}_group`,
+      title: "기본 점검",
+      children: lines.map((item, index) => ({
+        id: `legacy_${type}_item_${index}`,
+        title: item,
+        children: [],
+      })),
+    },
+  ];
+}
+
+function cleanTemplateNodes(nodes, depth = 0) {
+  return (nodes ?? [])
+    .map((node) => {
+      const title = String(node?.title ?? "").trim();
+      const children = depth < 2 ? cleanTemplateNodes(node?.children ?? [], depth + 1) : [];
+      if (!title && !children.length) return null;
+
+      return {
+        id: String(node?.id ?? createId(`template_${depth}`)),
+        title,
+        children,
+      };
+    })
+    .filter(Boolean);
+}
+
+function serializeTemplateData(nodes) {
+  return JSON.stringify(
+    {
+      version: 2,
+      groups: cleanTemplateNodes(nodes),
+    },
+    null,
+    2,
+  );
+}
+
+function getChecklistGroups(space, type = state.selectedChecklistType) {
+  return parseTemplateData(getChecklistTemplate(space, type), type);
+}
+
+function countTemplateNodes(nodes) {
+  return (nodes ?? []).reduce(
+    (count, node) => count + 1 + countTemplateNodes(node.children ?? []),
+    0,
+  );
+}
+
+function getCurrentCategoryCheck(spaceId, checklistType, categoryKey) {
+  const direct =
+    state.bootstrap?.current_category_checks?.find(
+      (item) =>
+        item.space_id === spaceId &&
+        item.checklist_type === checklistType &&
+        item.category_key === categoryKey &&
+        item.work_date === getWorkDate(APP_TIMEZONE),
+    ) ?? null;
+  if (direct) return direct;
+
+  const legacySummary = getCurrentCheck(spaceId, checklistType);
+  if (legacySummary?.checked) {
+    return {
+      ...legacySummary,
+      category_key: categoryKey,
+      category_label: "",
+      is_fallback: true,
+    };
+  }
+
+  return null;
+}
+
+function buildChecklistStatus(space, checklistType, overrides = new Map()) {
+  const groups = getChecklistGroups(space, checklistType);
+  const records = groups.map((group) => overrides.get(group.id) ?? getCurrentCategoryCheck(space.id, checklistType, group.id));
+  const checkedRecords = records.filter((record) => record?.checked);
+  const employeeNames = [...new Set(checkedRecords.map((record) => record.employee_name).filter(Boolean))];
+  const employeeIds = [...new Set(checkedRecords.map((record) => record.employee_id).filter(Boolean))];
+
+  return {
+    groups,
+    records,
+    checkedRecords,
+    totalCount: groups.length,
+    checkedCount: checkedRecords.length,
+    complete: groups.length > 0 && checkedRecords.length === groups.length,
+    partial: checkedRecords.length > 0 && checkedRecords.length < groups.length,
+    employeeNames,
+    employeeIds,
+  };
+}
+
+function buildSummaryPayload(space, checklistType, overrides = new Map()) {
+  const status = buildChecklistStatus(space, checklistType, overrides);
+  if (!status.complete) {
+    return {
+      checklist_type: checklistType,
+      space_id: space.id,
+      space_name: space.name,
+      checked: false,
+      employee_id: null,
+      employee_name: "",
+    };
+  }
+
+  if (status.employeeIds.length === 1) {
+    return {
+      checklist_type: checklistType,
+      space_id: space.id,
+      space_name: space.name,
+      checked: true,
+      employee_id: status.employeeIds[0],
+      employee_name: status.employeeNames[0] ?? "",
+    };
+  }
+
+  return {
+    checklist_type: checklistType,
+    space_id: space.id,
+    space_name: space.name,
+    checked: true,
+    employee_id: null,
+    employee_name: status.employeeNames.length ? "여러 직원" : "",
+  };
 }
 
 function countChecklistStatus(type) {
   const spaces = state.bootstrap?.spaces ?? [];
-  const checked = spaces.filter((space) => getCurrentCheck(space.id, type)?.checked).length;
+  const checked = spaces.filter((space) => buildChecklistStatus(space, type).complete).length;
   return {
     checked,
     unchecked: Math.max(spaces.length - checked, 0),
@@ -266,16 +444,19 @@ function clearCommentDraft(spaceId) {
   delete state.commentDrafts[getCommentDraftKey(spaceId)];
 }
 
-function getOpenDetailsType(spaceId) {
-  return state.openDetails[spaceId] ?? "";
+function getManageTemplateDraft(space) {
+  if (!state.manageTemplateDrafts[space.id]) {
+    state.manageTemplateDrafts[space.id] = {
+      open: getChecklistGroups(space, "open"),
+      always: getChecklistGroups(space, "always"),
+      close: getChecklistGroups(space, "close"),
+    };
+  }
+  return state.manageTemplateDrafts[space.id];
 }
 
-function setOpenDetailsType(spaceId, checklistType = "") {
-  if (checklistType) {
-    state.openDetails[spaceId] = checklistType;
-    return;
-  }
-  delete state.openDetails[spaceId];
+function clearManageTemplateDraft(spaceId) {
+  delete state.manageTemplateDrafts[spaceId];
 }
 
 function isManageDetailsOpen(spaceId) {
@@ -289,38 +470,69 @@ function setManageDetailsOpen(spaceId, open) {
 function buildChecklistPrompt(space, checklistType, isChecked) {
   const checklistLabel = getChecklistLabel(checklistType);
   if (isChecked) {
-    return `${space.name} 공간의 ${checklistLabel} 확인 완료를 해제할까요?\n\n해제하면 다시 '체크가 필요한 곳'으로 이동합니다.`;
+    return `${space.name} 공간의 ${checklistLabel} 확인 완료를 해제할까요?\n\n해제하면 해당 ${checklistLabel} 대분류 체크가 모두 해제됩니다.`;
   }
 
-  const items = getChecklistItems(space, checklistType);
-  const itemLines = items.length
-    ? items.map((item, index) => `${index + 1}. ${item}`).join("\n")
-    : "등록된 체크 항목이 없습니다.";
+  const groups = getChecklistGroups(space, checklistType);
+  const alwaysGroups = getChecklistGroups(space, "always");
+  const groupLines = groups.length
+    ? groups.map((group, index) => `${index + 1}. ${group.title}`).join("\n")
+    : "등록된 대분류가 없습니다.";
+  const alwaysLines = alwaysGroups.length
+    ? ["", "상시 체크 항목", ...alwaysGroups.map((group, index) => `${index + 1}. ${group.title}`)].join("\n")
+    : "";
 
   return [
-    `${space.name} 공간의 ${checklistLabel} 체크 항목입니다.`,
+    `${space.name} 공간의 ${checklistLabel} 대분류입니다.`,
     "",
-    itemLines,
+    groupLines,
+    alwaysLines,
     "",
-    "위 항목을 모두 확인했다면 확인을 눌러 주세요.",
+    "모든 대분류를 확인했다면 확인을 눌러 주세요.",
   ].join("\n");
 }
 
-function buildOwnerText(currentCheck) {
+function buildOwnerText(space, checklistType = state.selectedChecklistType) {
   if (!getSettings().show_employee_name) return "";
-  if (!currentCheck?.employee_name) return "";
-  return `확인 직원: ${currentCheck.employee_name}`;
+
+  const status = buildChecklistStatus(space, checklistType);
+  if (!status.checkedCount) return "";
+
+  if (status.complete) {
+    if (status.employeeNames.length === 1) {
+      return `확인 직원: ${status.employeeNames[0]}`;
+    }
+    if (status.employeeNames.length > 1) {
+      return "확인 직원: 여러 직원";
+    }
+  }
+
+  if (status.partial) {
+    return status.employeeNames.length <= 1
+      ? `부분 확인: ${status.employeeNames[0] ?? "확인 중"}`
+      : "부분 확인: 여러 직원";
+  }
+
+  return "";
 }
 
-function renderChecklistItemsMarkup(space, checklistType = state.selectedChecklistType) {
-  const items = getChecklistItems(space, checklistType);
-  if (!items.length) {
+function renderTemplateTreeMarkup(nodes, depth = 0) {
+  if (!nodes.length) {
     return '<p class="helper-text">등록된 체크 항목이 없습니다.</p>';
   }
 
   return `
-    <ul class="checklist-item-list__items">
-      ${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+    <ul class="checklist-item-list__items ${depth ? "is-nested" : ""}">
+      ${nodes
+        .map(
+          (node) => `
+            <li>
+              <span>${escapeHtml(node.title)}</span>
+              ${node.children?.length ? renderTemplateTreeMarkup(node.children, depth + 1) : ""}
+            </li>
+          `,
+        )
+        .join("")}
     </ul>
   `;
 }
@@ -379,6 +591,82 @@ function renderHistoryCommentsMarkup(comments) {
     .join("");
 }
 
+function getRecentNoteEntries(days = RECENT_NOTE_DAYS) {
+  const cutoff = getDateKey(new Date(Date.now() - (days - 1) * 24 * 60 * 60 * 1000), APP_TIMEZONE);
+  const currentNotes = (state.bootstrap?.current_comments ?? []).map((comment) => ({
+    ...comment,
+    record_date: comment.work_date,
+    timestamp: comment.updated_at ?? comment.created_at,
+    is_archived: false,
+  }));
+  const archivedNotes = (state.bootstrap?.archived_comments ?? []).map((comment) => ({
+    ...comment,
+    record_date: comment.archive_date,
+    timestamp: comment.updated_at ?? comment.archived_at ?? comment.created_at,
+    is_archived: true,
+  }));
+
+  return [...currentNotes, ...archivedNotes]
+    .filter((comment) => comment.record_date >= cutoff)
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+}
+
+function formatRecentNoteLine(comment) {
+  return [
+    comment.space_name,
+    comment.employee_name || "이름 없음",
+    comment.content,
+    formatKoreanDateTime(comment.timestamp, APP_TIMEZONE),
+  ].join(" · ");
+}
+
+function showToast(message) {
+  if (!elements.toast) return;
+  setText(elements.toast, message);
+  toggleClass(elements.toast, "is-hidden", false);
+  toggleClass(elements.toast, "is-visible", true);
+
+  if (state.toastTimer) {
+    window.clearTimeout(state.toastTimer);
+  }
+
+  state.toastTimer = window.setTimeout(() => {
+    toggleClass(elements.toast, "is-visible", false);
+    toggleClass(elements.toast, "is-hidden", true);
+  }, 1800);
+}
+
+function openDetailSheet(spaceId, checklistType) {
+  if (
+    state.detailSheet.spaceId === spaceId &&
+    state.detailSheet.checklistType === checklistType
+  ) {
+    closeDetailSheet();
+    return;
+  }
+  state.detailSheet = { spaceId, checklistType };
+  renderSpaces();
+  renderDetailSheet();
+}
+
+function closeDetailSheet() {
+  state.detailSheet = { spaceId: "", checklistType: "" };
+  toggleClass(elements.detailSheetBackdrop, "is-hidden", true);
+  if (elements.detailSheetBody) elements.detailSheetBody.innerHTML = "";
+  if (state.bootstrap) renderSpaces();
+}
+
+function openNotesSheet() {
+  state.notesSheetOpen = true;
+  renderNotesSheet();
+}
+
+function closeNotesSheet() {
+  state.notesSheetOpen = false;
+  toggleClass(elements.notesSheetBackdrop, "is-hidden", true);
+  if (elements.notesSheetBody) elements.notesSheetBody.innerHTML = "";
+}
+
 function measurePositions(container, selector, attributeName) {
   if (!container) return new Map();
   return new Map(
@@ -423,6 +711,14 @@ async function refresh() {
   if (!activeSpaces.some((item) => item.id === state.selectedManageSpaceId)) {
     state.selectedManageSpaceId = "";
   }
+  Object.keys(state.manageTemplateDrafts).forEach((spaceId) => {
+    if (!activeSpaces.some((item) => item.id === spaceId)) {
+      clearManageTemplateDraft(spaceId);
+    }
+  });
+  if (state.detailSheet.spaceId && !activeSpaces.some((item) => item.id === state.detailSheet.spaceId)) {
+    closeDetailSheet();
+  }
 
   renderHeader();
   renderOverview();
@@ -433,10 +729,12 @@ async function refresh() {
   renderHistory();
   renderSettings();
   renderSetupAccess();
+  renderDetailSheet();
+  renderNotesSheet();
   activatePanel(state.activePanel);
-  startOpenAlertWatcher();
-  state.hasBootstrapped = true;
   setLoading(false);
+  state.hasBootstrapped = true;
+  startOpenAlertWatcher();
 }
 
 function renderHeader() {
@@ -453,21 +751,20 @@ function renderHeader() {
 }
 
 function renderOverview() {
-  const focus = currentFocusType();
-  const openStats = countChecklistStatus("open");
-  const alwaysStats = countChecklistStatus("always");
-  const closeStats = countChecklistStatus("close");
+  const notes = getRecentNoteEntries();
+  const tickerMarkup = notes.length
+    ? [...notes.slice(0, 10), ...notes.slice(0, 10)]
+        .map(
+          (comment) => `
+            <span class="ticker-card__item">${escapeHtml(formatRecentNoteLine(comment))}</span>
+          `,
+        )
+        .join("")
+    : '<span class="ticker-card__empty">등록된 메모가 없습니다.</span>';
 
-  setText(elements.openOverviewCount, `확인 ${openStats.checked} · 미확인 ${openStats.unchecked}`);
-  setText(elements.alwaysOverviewCount, `확인 ${alwaysStats.checked} · 미확인 ${alwaysStats.unchecked}`);
-  setText(elements.closeOverviewCount, `확인 ${closeStats.checked} · 미확인 ${closeStats.unchecked}`);
-
-  toggleClass(elements.openOverview, "is-hidden", focus !== "open");
-  toggleClass(elements.alwaysOverview, "is-hidden", focus !== "always");
-  toggleClass(elements.closeOverview, "is-hidden", focus !== "close");
-  toggleClass(elements.openOverview, "is-active", focus === "open");
-  toggleClass(elements.alwaysOverview, "is-active", focus === "always");
-  toggleClass(elements.closeOverview, "is-active", focus === "close");
+  setHtml(elements.notesTickerTrack, tickerMarkup);
+  toggleClass(elements.notesTickerTrack, "is-animated", notes.length > 1);
+  if (elements.notesTickerButton) elements.notesTickerButton.disabled = !notes.length;
 }
 
 function renderChecklistTabs() {
@@ -519,11 +816,127 @@ function renderEmployees() {
 
 function renderChecklistSummary() {
   const spaces = state.bootstrap?.spaces ?? [];
-  const checkedCount = spaces.filter((space) => getCurrentCheck(space.id, state.selectedChecklistType)?.checked).length;
+  const checkedCount = spaces.filter((space) => buildChecklistStatus(space, state.selectedChecklistType).complete).length;
   const uncheckedCount = Math.max(spaces.length - checkedCount, 0);
 
   setText(elements.summaryCount, `체크가 필요한 곳 ${uncheckedCount} · 체크를 완료한 곳 ${checkedCount}`);
   setText(elements.summaryCaption, "");
+}
+
+async function saveChecklistCategoryChanges(space, checklistType, categoryPayloads) {
+  for (const payload of categoryPayloads) {
+    await state.repository.saveCurrentCategoryCheck(payload);
+  }
+
+  const overrides = new Map(
+    categoryPayloads.map((payload) => [
+      payload.category_key,
+      {
+        checked: payload.checked,
+        employee_id: payload.employee_id ?? null,
+        employee_name: payload.employee_name ?? "",
+      },
+    ]),
+  );
+  await state.repository.saveCurrentCheck(buildSummaryPayload(space, checklistType, overrides));
+}
+
+async function toggleChecklistSummary(space, checklistType) {
+  const status = buildChecklistStatus(space, checklistType);
+  if (!status.groups.length) {
+    window.alert(`설정에서 ${getChecklistLabel(checklistType)} 대분류를 먼저 추가해 주세요.`);
+    renderSpaces();
+    return;
+  }
+
+  const willCheck = !status.complete;
+  if (willCheck && !getSelectedEmployee()) {
+    window.alert("담당 직원을 먼저 선택해 주세요.");
+    renderSpaces();
+    return;
+  }
+
+  const confirmed = window.confirm(buildChecklistPrompt(space, checklistType, status.complete));
+  if (!confirmed) {
+    renderSpaces();
+    return;
+  }
+
+  const employee = getSelectedEmployee();
+  const payloads = status.groups.map((group) => ({
+    checklist_type: checklistType,
+    space_id: space.id,
+    space_name: space.name,
+    category_key: group.id,
+    category_label: group.title,
+    checked: willCheck,
+    employee_id: willCheck ? employee?.id ?? null : null,
+    employee_name: willCheck ? employee?.name ?? "" : "",
+  }));
+
+  await saveChecklistCategoryChanges(space, checklistType, payloads);
+}
+
+async function toggleChecklistCategory(space, checklistType, group) {
+  const current = getCurrentCategoryCheck(space.id, checklistType, group.id);
+  const willCheck = !current?.checked;
+
+  if (willCheck && !getSelectedEmployee()) {
+    window.alert("담당 직원을 먼저 선택해 주세요.");
+    return;
+  }
+
+  const employee = getSelectedEmployee();
+  await saveChecklistCategoryChanges(space, checklistType, [
+    {
+      checklist_type: checklistType,
+      space_id: space.id,
+      space_name: space.name,
+      category_key: group.id,
+      category_label: group.title,
+      checked: willCheck,
+      employee_id: willCheck ? employee?.id ?? null : null,
+      employee_name: willCheck ? employee?.name ?? "" : "",
+    },
+  ]);
+
+  showToast(`${group.title} ${willCheck ? "체크됨" : "해제됨"}`);
+}
+
+async function saveSpaceComment(spaceId) {
+  const space = state.bootstrap?.spaces.find((item) => item.id === spaceId);
+  if (!space) return;
+
+  const draftState = getCommentDraft(space.id);
+  const content = draftState.text.trim();
+  if (!content) {
+    window.alert("메모 내용을 입력해 주세요.");
+    return;
+  }
+
+  const employee = getSelectedEmployee();
+  if (!employee) {
+    window.alert("담당 직원을 먼저 선택해 주세요.");
+    return;
+  }
+
+  if (draftState.editingCommentId) {
+    await state.repository.updateCurrentComment({
+      commentId: draftState.editingCommentId,
+      content,
+    });
+  } else {
+    await state.repository.addCurrentComment({
+      checklist_type: "shared",
+      space_id: space.id,
+      space_name: space.name,
+      employee_id: employee.id,
+      employee_name: employee.name,
+      content,
+    });
+  }
+
+  clearCommentDraft(space.id);
 }
 
 function buildSpaceCard(space) {
@@ -532,54 +945,48 @@ function buildSpaceCard(space) {
   const name = fragment.querySelector(".space-card__name");
   const typeControls = fragment.querySelector('[data-role="type-controls"]');
   const ownerState = fragment.querySelector('[data-role="owner-state"]');
-  const detailsPanel = fragment.querySelector('[data-role="details-panel"]');
-  const detailsTitle = fragment.querySelector('[data-role="details-title"]');
-  const detailsConfirmButton = fragment.querySelector('[data-role="details-confirm"]');
-  const checklistItems = fragment.querySelector('[data-role="checklist-items"]');
-  const commentInput = fragment.querySelector(".space-card__comment");
-  const saveCommentButton = fragment.querySelector('[data-action="save-comment"]');
-  const cancelCommentButton = fragment.querySelector('[data-action="cancel-comment"]');
-  const commentList = fragment.querySelector('[data-role="comment-list"]');
-  const currentCheck = getCurrentCheck(space.id, state.selectedChecklistType);
-  const visibleDetailsType = getOpenDetailsType(space.id);
-  const checklistType = visibleDetailsType || state.selectedChecklistType;
-  const detailCheck = getCurrentCheck(space.id, checklistType);
+  const selectedStatus = buildChecklistStatus(space, state.selectedChecklistType);
   const comments = getCurrentComments(space.id);
-  const draft = getCommentDraft(space.id);
-  const ownerText = buildOwnerText(currentCheck);
-  const isPanelOpen = Boolean(visibleDetailsType);
 
   card.dataset.spaceId = space.id;
-  toggleClass(card, "is-checked", Boolean(currentCheck?.checked));
+  toggleClass(card, "is-checked", selectedStatus.complete);
+  toggleClass(card, "is-partial", selectedStatus.partial);
 
-  setText(name, space.name);
-  toggleClass(name, "has-note", comments.length > 0);
+  setHtml(
+    name,
+    `<span class="space-card__name-text ${comments.length ? "has-note" : ""}">${escapeHtml(space.name)}</span>`,
+  );
+
+  const ownerText = buildOwnerText(space, state.selectedChecklistType);
   setText(ownerState, ownerText);
   toggleClass(ownerState, "is-hidden", !ownerText);
 
   setHtml(
     typeControls,
     CHECKLIST_TYPES.map((type) => {
-      const typeCheck = getCurrentCheck(space.id, type.id);
-      const isActive = visibleDetailsType === type.id;
+      const status = buildChecklistStatus(space, type.id);
+      const disabled = !status.groups.length;
+      const isSheetOpen =
+        state.detailSheet.spaceId === space.id && state.detailSheet.checklistType === type.id;
 
       return `
-        <div class="space-card__type-control ${isActive ? "is-active" : ""}">
+        <div class="space-card__type-control ${status.complete ? "is-complete" : ""} ${status.partial ? "is-partial" : ""} ${isSheetOpen ? "is-active" : ""}">
           <button
-            class="space-card__type-button ${isActive ? "is-active" : ""}"
-            data-action="toggle-detail-type"
+            class="space-card__type-button ${isSheetOpen ? "is-active" : ""}"
+            data-action="open-detail-sheet"
             data-checklist-type="${type.id}"
             type="button"
           >
             ${type.label}
           </button>
-          <label class="space-card__checkbox ${typeCheck?.checked ? "is-checked" : ""}">
+          <label class="space-card__checkbox ${status.complete ? "is-checked" : ""} ${disabled ? "is-disabled" : ""}">
             <input
               class="space-card__checkbox-input"
-              data-action="toggle-check"
+              data-action="toggle-summary-check"
               data-checklist-type="${type.id}"
               type="checkbox"
-              ${typeCheck?.checked ? "checked" : ""}
+              ${status.complete ? "checked" : ""}
+              ${disabled ? "disabled" : ""}
             />
             <span class="space-card__checkbox-ui" aria-hidden="true"></span>
           </label>
@@ -588,89 +995,22 @@ function buildSpaceCard(space) {
     }).join(""),
   );
 
-  toggleClass(detailsPanel, "is-hidden", !isPanelOpen);
-
-  if (isPanelOpen) {
-    setText(detailsTitle, `${getChecklistLabel(checklistType)} 세부내용`);
-    setHtml(checklistItems, renderChecklistItemsMarkup(space, checklistType));
-    setHtml(commentList, renderCurrentCommentsMarkup(comments));
-    commentInput.value = draft.text ?? "";
-    commentInput.placeholder = "공간 메모를 입력해 주세요.";
-    setText(saveCommentButton, draft.editingCommentId ? "수정 저장" : "메모 저장");
-    toggleClass(cancelCommentButton, "is-hidden", !draft.editingCommentId);
-    setText(detailsConfirmButton, detailCheck?.checked ? "확인 해제" : "확인");
-    toggleClass(detailsConfirmButton, "is-complete", Boolean(detailCheck?.checked));
-  } else {
-    setText(detailsTitle, "");
-    setHtml(checklistItems, "");
-    setHtml(commentList, "");
-    commentInput.value = "";
-    toggleClass(cancelCommentButton, "is-hidden", true);
-    setText(detailsConfirmButton, "확인");
-    toggleClass(detailsConfirmButton, "is-complete", false);
-  }
-
-  async function toggleChecklistState(checklistTypeToUpdate) {
-    const alreadyChecked = Boolean(getCurrentCheck(space.id, checklistTypeToUpdate)?.checked);
-
-    if (!alreadyChecked && !getSelectedEmployee()) {
-      window.alert("담당 직원을 먼저 선택해 주세요.");
-      renderSpaces();
-      return;
-    }
-
-    const confirmed = window.confirm(buildChecklistPrompt(space, checklistTypeToUpdate, alreadyChecked));
-    if (!confirmed) {
-      renderSpaces();
-      return;
-    }
-
-    if (alreadyChecked) {
-      await state.repository.saveCurrentCheck({
-        checklist_type: checklistTypeToUpdate,
-        space_id: space.id,
-        space_name: space.name,
-        checked: false,
-        employee_id: null,
-        employee_name: "",
-      });
-      await refresh();
-      return;
-    }
-
-    const employee = getSelectedEmployee();
-    await state.repository.saveCurrentCheck({
-      checklist_type: checklistTypeToUpdate,
-      space_id: space.id,
-      space_name: space.name,
-      checked: true,
-      employee_id: employee.id,
-      employee_name: employee.name,
-    });
-    await refresh();
-  }
-
-  commentInput.addEventListener("input", (event) => {
-    setCommentDraft(space.id, { text: event.target.value });
-  });
-
-  Array.from(typeControls.querySelectorAll('[data-action="toggle-detail-type"]')).forEach((button) => {
+  Array.from(typeControls.querySelectorAll('[data-action="open-detail-sheet"]')).forEach((button) => {
     button.addEventListener("click", () => {
-      const nextType = button.dataset.checklistType ?? "open";
-      setOpenDetailsType(space.id, visibleDetailsType === nextType ? "" : nextType);
-      renderSpaces();
+      openDetailSheet(space.id, button.dataset.checklistType ?? "open");
     });
   });
 
-  Array.from(typeControls.querySelectorAll('[data-action="toggle-check"]')).forEach((input) => {
+  Array.from(typeControls.querySelectorAll('[data-action="toggle-summary-check"]')).forEach((input) => {
     input.addEventListener("click", (event) => {
       event.stopPropagation();
     });
 
     input.addEventListener("change", async () => {
-      const checklistTypeToUpdate = input.dataset.checklistType ?? "open";
+      const checklistType = input.dataset.checklistType ?? "open";
       try {
-        await toggleChecklistState(checklistTypeToUpdate);
+        await toggleChecklistSummary(space, checklistType);
+        await refresh();
       } catch (error) {
         if (isMissingSupabaseTable(error)) {
           showSchemaHelp(error);
@@ -682,54 +1022,145 @@ function buildSpaceCard(space) {
     });
   });
 
-  detailsConfirmButton?.addEventListener("click", async () => {
-    if (!isPanelOpen) return;
+  return card;
+}
 
-    try {
-      await toggleChecklistState(checklistType);
-    } catch (error) {
-      if (isMissingSupabaseTable(error)) {
-        showSchemaHelp(error);
-        return;
-      }
-      window.alert(`확인 상태 저장에 실패했습니다.\n${getErrorMessage(error)}`);
-      renderSpaces();
-    }
+function renderDetailSheet() {
+  const { spaceId, checklistType } = state.detailSheet;
+  if (!spaceId || !checklistType) {
+    closeDetailSheet();
+    return;
+  }
+
+  const space = state.bootstrap?.spaces.find((item) => item.id === spaceId);
+  if (!space) {
+    closeDetailSheet();
+    return;
+  }
+
+  const checklistGroups = getChecklistGroups(space, checklistType);
+  const alwaysGroups = getChecklistGroups(space, "always");
+  const comments = getCurrentComments(space.id);
+  const draft = getCommentDraft(space.id);
+
+  setText(elements.detailSheetTitle, `${space.name} · ${getChecklistLabel(checklistType)}`);
+  setText(elements.detailSheetSubtitle, `${getChecklistLabel(checklistType)} 체크 항목과 상시 체크 항목을 함께 확인합니다.`);
+  toggleClass(elements.detailSheetBackdrop, "is-hidden", false);
+
+  const checkableMarkup = checklistGroups.length
+    ? checklistGroups
+        .map((group) => {
+          const record = getCurrentCategoryCheck(space.id, checklistType, group.id);
+          const ownerText =
+            getSettings().show_employee_name && record?.checked && record.employee_name
+              ? record.employee_name
+              : "";
+
+          return `
+            <article class="detail-group">
+              <div class="detail-group__row">
+                <label class="detail-group__check">
+                  <input
+                    data-action="toggle-category-check"
+                    data-category-key="${escapeHtml(group.id)}"
+                    type="checkbox"
+                    ${record?.checked ? "checked" : ""}
+                  />
+                  <span class="space-card__checkbox-ui detail-group__checkbox-ui" aria-hidden="true"></span>
+                  <span class="detail-group__title">${escapeHtml(group.title)}</span>
+                </label>
+                ${ownerText ? `<span class="helper-text">${escapeHtml(ownerText)}</span>` : ""}
+              </div>
+              <div class="detail-group__body">
+                ${group.children?.length ? renderTemplateTreeMarkup(group.children) : '<p class="helper-text">세부 항목이 없습니다.</p>'}
+              </div>
+            </article>
+          `;
+        })
+        .join("")
+    : '<div class="empty-inline">등록된 대분류가 없습니다.</div>';
+
+  const alwaysMarkup = alwaysGroups.length
+    ? alwaysGroups
+        .map(
+          (group) => `
+            <article class="detail-group is-readonly">
+              <div class="detail-group__row">
+                <strong class="detail-group__title">${escapeHtml(group.title)}</strong>
+              </div>
+              <div class="detail-group__body">
+                ${group.children?.length ? renderTemplateTreeMarkup(group.children) : '<p class="helper-text">세부 항목이 없습니다.</p>'}
+              </div>
+            </article>
+          `,
+        )
+        .join("")
+    : '<div class="empty-inline">등록된 상시 체크 항목이 없습니다.</div>';
+
+  setHtml(
+    elements.detailSheetBody,
+    `
+      <div class="sheet-stack">
+        <section class="surface">
+          <p class="surface__label">${escapeHtml(getChecklistLabel(checklistType))} 체크 항목</p>
+          <div class="stack">
+            ${checkableMarkup}
+          </div>
+        </section>
+        <section class="surface">
+          <p class="surface__label">상시 체크 항목</p>
+          <div class="stack">
+            ${alwaysMarkup}
+          </div>
+        </section>
+        <section class="surface">
+          <p class="surface__label">특이사항 / 공유메모</p>
+          <label class="field">
+            <textarea
+              id="detail-sheet-comment"
+              rows="3"
+              placeholder="공간 메모를 입력해 주세요."
+            >${escapeHtml(draft.text ?? "")}</textarea>
+          </label>
+          <div class="space-card__actions">
+            <button class="secondary-button" data-action="save-sheet-comment" type="button">${draft.editingCommentId ? "수정 저장" : "메모 저장"}</button>
+            <button class="secondary-button is-subtle ${draft.editingCommentId ? "" : "is-hidden"}" data-action="cancel-sheet-comment" type="button">수정 취소</button>
+          </div>
+          <div class="comment-list" data-role="sheet-comment-list">
+            ${renderCurrentCommentsMarkup(comments)}
+          </div>
+        </section>
+      </div>
+    `,
+  );
+
+  const commentInput = elements.detailSheetBody?.querySelector("#detail-sheet-comment");
+  commentInput?.addEventListener("input", (event) => {
+    setCommentDraft(space.id, { text: event.target.value });
   });
 
-  saveCommentButton.addEventListener("click", async () => {
+  Array.from(elements.detailSheetBody?.querySelectorAll('[data-action="toggle-category-check"]') ?? []).forEach((input) => {
+    input.addEventListener("change", async () => {
+      const categoryKey = input.dataset.categoryKey ?? "";
+      const group = checklistGroups.find((item) => item.id === categoryKey);
+      if (!group) return;
+
+      try {
+        await toggleChecklistCategory(space, checklistType, group);
+        await refresh();
+      } catch (error) {
+        if (isMissingSupabaseTable(error)) {
+          showSchemaHelp(error);
+          return;
+        }
+        window.alert(`대분류 체크 저장에 실패했습니다.\n${getErrorMessage(error)}`);
+      }
+    });
+  });
+
+  elements.detailSheetBody?.querySelector('[data-action="save-sheet-comment"]')?.addEventListener("click", async () => {
     try {
-      const draftState = getCommentDraft(space.id);
-      const content = draftState.text.trim();
-      if (!content) {
-        window.alert("메모 내용을 입력해 주세요.");
-        return;
-      }
-
-      const employee = getSelectedEmployee();
-      if (!employee) {
-        window.alert("담당 직원을 먼저 선택해 주세요.");
-        return;
-      }
-
-      saveCommentButton.disabled = true;
-      if (draftState.editingCommentId) {
-        await state.repository.updateCurrentComment({
-          commentId: draftState.editingCommentId,
-          content,
-        });
-      } else {
-        await state.repository.addCurrentComment({
-          checklist_type: "shared",
-          space_id: space.id,
-          space_name: space.name,
-          employee_id: employee.id,
-          employee_name: employee.name,
-          content,
-        });
-      }
-      clearCommentDraft(space.id);
-      setOpenDetailsType(space.id, checklistType);
+      await saveSpaceComment(space.id);
       await refresh();
     } catch (error) {
       if (isMissingSupabaseTable(error)) {
@@ -737,18 +1168,15 @@ function buildSpaceCard(space) {
         return;
       }
       window.alert(`메모 저장에 실패했습니다.\n${getErrorMessage(error)}`);
-    } finally {
-      saveCommentButton.disabled = false;
     }
   });
 
-  cancelCommentButton.addEventListener("click", () => {
+  elements.detailSheetBody?.querySelector('[data-action="cancel-sheet-comment"]')?.addEventListener("click", () => {
     clearCommentDraft(space.id);
-    setOpenDetailsType(space.id, checklistType);
-    renderSpaces();
+    renderDetailSheet();
   });
 
-  Array.from(commentList.querySelectorAll('[data-action="edit-comment"]')).forEach((button) => {
+  Array.from(elements.detailSheetBody?.querySelectorAll('[data-action="edit-comment"]') ?? []).forEach((button) => {
     button.addEventListener("click", () => {
       const commentId = button.dataset.commentId;
       const comment = comments.find((item) => item.id === commentId);
@@ -757,12 +1185,11 @@ function buildSpaceCard(space) {
         text: comment.content,
         editingCommentId: comment.id,
       });
-      setOpenDetailsType(space.id, checklistType);
-      renderSpaces();
+      renderDetailSheet();
     });
   });
 
-  Array.from(commentList.querySelectorAll('[data-action="delete-comment"]')).forEach((button) => {
+  Array.from(elements.detailSheetBody?.querySelectorAll('[data-action="delete-comment"]') ?? []).forEach((button) => {
     button.addEventListener("click", async () => {
       const commentId = button.dataset.commentId;
       const comment = comments.find((item) => item.id === commentId);
@@ -776,7 +1203,6 @@ function buildSpaceCard(space) {
         if (getCommentDraft(space.id).editingCommentId === commentId) {
           clearCommentDraft(space.id);
         }
-        setOpenDetailsType(space.id, checklistType);
         await refresh();
       } catch (error) {
         if (isMissingSupabaseTable(error)) {
@@ -787,8 +1213,138 @@ function buildSpaceCard(space) {
       }
     });
   });
+}
 
-  return card;
+function renderNotesSheet() {
+  if (!state.notesSheetOpen) {
+    closeNotesSheet();
+    return;
+  }
+
+  const notes = getRecentNoteEntries();
+  toggleClass(elements.notesSheetBackdrop, "is-hidden", false);
+
+  if (!notes.length) {
+    setHtml(elements.notesSheetBody, '<div class="empty-state">최근 7일간 등록된 메모가 없습니다.</div>');
+    return;
+  }
+
+  const groups = new Map();
+  notes.forEach((comment) => {
+    const list = groups.get(comment.record_date) ?? [];
+    list.push(comment);
+    groups.set(comment.record_date, list);
+  });
+
+  setHtml(
+    elements.notesSheetBody,
+    [...groups.entries()]
+      .map(
+        ([date, items]) => `
+          <section class="history-group">
+            <div class="history-group__header">
+              <h3>${escapeHtml(date)}</h3>
+              <span class="space-group__count">${items.length}</span>
+            </div>
+            <div class="stack">
+              ${items
+                .map(
+                  (comment) => `
+                    <article class="comment-item">
+                      <div class="comment-item__top">
+                        <strong>${escapeHtml(comment.space_name)}</strong>
+                        <span class="helper-text">${escapeHtml(formatKoreanDateTime(comment.timestamp, APP_TIMEZONE))}</span>
+                      </div>
+                      <p class="helper-text">${escapeHtml(comment.employee_name || "이름 없음")}</p>
+                      <p class="comment-item__body">${escapeHtml(comment.content)}</p>
+                    </article>
+                  `,
+                )
+                .join("")}
+            </div>
+          </section>
+        `,
+      )
+      .join(""),
+  );
+}
+
+function updateTemplateDraft(spaceId, checklistType, updater) {
+  const space = state.bootstrap?.spaces.find((item) => item.id === spaceId);
+  if (!space) return;
+  const draft = getManageTemplateDraft(space);
+  draft[checklistType] = updater(structuredClone(draft[checklistType]));
+}
+
+function updateTemplateNode(nodes, targetId, updater) {
+  return nodes.map((node) => {
+    if (node.id === targetId) {
+      return updater({ ...node, children: structuredClone(node.children ?? []) });
+    }
+    return {
+      ...node,
+      children: updateTemplateNode(node.children ?? [], targetId, updater),
+    };
+  });
+}
+
+function removeTemplateNode(nodes, targetId) {
+  return nodes
+    .filter((node) => node.id !== targetId)
+    .map((node) => ({
+      ...node,
+      children: removeTemplateNode(node.children ?? [], targetId),
+    }));
+}
+
+function renderTemplateEditorNode(node, depth = 0) {
+  const levelLabel = depth === 0 ? "대분류" : depth === 1 ? "중분류" : "소분류";
+  const addLabel = depth === 0 ? "중분류 추가" : depth === 1 ? "소분류 추가" : "";
+  const childrenMarkup = node.children?.length
+    ? `
+        <div class="template-editor__children">
+          ${node.children.map((child) => renderTemplateEditorNode(child, depth + 1)).join("")}
+        </div>
+      `
+    : "";
+
+  return `
+    <article class="template-editor__node" data-node-depth="${depth}">
+      <div class="template-editor__node-row">
+        <span class="template-editor__node-label">${levelLabel}</span>
+        <input
+          class="template-editor__input"
+          data-action="update-template-node"
+          data-node-id="${escapeHtml(node.id)}"
+          data-node-depth="${depth}"
+          type="text"
+          value="${escapeHtml(node.title)}"
+          placeholder="${levelLabel} 이름"
+        />
+        ${depth < 2 ? `<button class="tiny-button" data-action="add-template-child" data-node-id="${escapeHtml(node.id)}" data-node-depth="${depth}" type="button">${addLabel}</button>` : ""}
+        <button class="tiny-button is-danger" data-action="delete-template-node" data-node-id="${escapeHtml(node.id)}" type="button">삭제</button>
+      </div>
+      ${childrenMarkup}
+    </article>
+  `;
+}
+
+function renderTemplateEditorMarkup(spaceId, checklistType, nodes) {
+  const typeLabel = getChecklistLabel(checklistType);
+  const itemCount = countTemplateNodes(nodes);
+
+  return `
+    <section class="template-editor" data-template-type="${checklistType}">
+      <div class="template-editor__header">
+        <strong>${typeLabel} 체크 항목</strong>
+        <div class="template-editor__actions">
+          <span class="summary-badge">${itemCount ? `${itemCount}개 항목` : "비어 있음"}</span>
+          <button class="tiny-button" data-action="add-template-root" data-space-id="${escapeHtml(spaceId)}" data-template-type="${checklistType}" type="button">대분류 추가</button>
+        </div>
+      </div>
+      ${nodes.length ? nodes.map((node) => renderTemplateEditorNode(node)).join("") : '<div class="empty-inline">대분류를 추가해 주세요.</div>'}
+    </section>
+  `;
 }
 
 function renderSpaceGroup(title, spaces, emptyMessage) {
@@ -823,8 +1379,8 @@ function renderSpaces() {
     return;
   }
 
-  const pending = spaces.filter((space) => !getCurrentCheck(space.id, state.selectedChecklistType)?.checked);
-  const completed = spaces.filter((space) => getCurrentCheck(space.id, state.selectedChecklistType)?.checked);
+  const pending = spaces.filter((space) => !buildChecklistStatus(space, state.selectedChecklistType).complete);
+  const completed = spaces.filter((space) => buildChecklistStatus(space, state.selectedChecklistType).complete);
 
   elements.spacesList?.append(
     renderSpaceGroup("체크가 필요한 곳", pending, "아직 확인이 필요한 공간이 없습니다."),
@@ -944,6 +1500,11 @@ function renderManageSpaces() {
   if (elements.spaceMoveDown) elements.spaceMoveDown.disabled = selectedIndex < 0 || selectedIndex >= spaces.length - 1;
 
   spaces.forEach((space) => {
+    const draft = getManageTemplateDraft(space);
+    const totalItemCount =
+      countTemplateNodes(draft.open) +
+      countTemplateNodes(draft.always) +
+      countTemplateNodes(draft.close);
     const wrapper = document.createElement("article");
     wrapper.className = "manage-space-card";
     wrapper.dataset.spaceId = space.id;
@@ -957,21 +1518,12 @@ function renderManageSpaces() {
       <details>
         <summary>
           체크 항목 편집
-          <span class="summary-badge">${getChecklistItems(space, "open").length || getChecklistItems(space, "always").length || getChecklistItems(space, "close").length ? "입력됨" : "비어 있음"}</span>
+          <span class="summary-badge">${totalItemCount ? `${totalItemCount}개 항목` : "비어 있음"}</span>
         </summary>
         <div class="manage-space-card__details-body">
-          <label class="field">
-            <span class="field__label">오픈 체크 항목</span>
-            <textarea rows="4" data-role="open-template">${escapeHtml(space.open_checklist_template ?? "")}</textarea>
-          </label>
-          <label class="field">
-            <span class="field__label">상시 체크 항목</span>
-            <textarea rows="4" data-role="always-template">${escapeHtml(space.always_checklist_template ?? "")}</textarea>
-          </label>
-          <label class="field">
-            <span class="field__label">마감 체크 항목</span>
-            <textarea rows="4" data-role="close-template">${escapeHtml(space.close_checklist_template ?? "")}</textarea>
-          </label>
+          ${renderTemplateEditorMarkup(space.id, "open", draft.open)}
+          ${renderTemplateEditorMarkup(space.id, "always", draft.always)}
+          ${renderTemplateEditorMarkup(space.id, "close", draft.close)}
           <div class="space-card__actions">
             <button class="secondary-button" data-role="save-space" type="button">공간 설정 저장</button>
           </div>
@@ -979,9 +1531,6 @@ function renderManageSpaces() {
       </details>
     `;
 
-    const openInput = wrapper.querySelector('[data-role="open-template"]');
-    const alwaysInput = wrapper.querySelector('[data-role="always-template"]');
-    const closeInput = wrapper.querySelector('[data-role="close-template"]');
     const saveButton = wrapper.querySelector('[data-role="save-space"]');
     const deleteButton = wrapper.querySelector('[data-role="delete-space"]');
     const details = wrapper.querySelector("details");
@@ -992,19 +1541,86 @@ function renderManageSpaces() {
     });
 
     wrapper.addEventListener("click", (event) => {
-      if (event.target.closest("textarea")) return;
+      if (event.target.closest("input, textarea, button, summary")) return;
       state.selectedManageSpaceId = space.id;
       renderManageSpaces();
+    });
+
+    Array.from(wrapper.querySelectorAll('[data-action="update-template-node"]')).forEach((input) => {
+      input.addEventListener("input", () => {
+        const section = input.closest("[data-template-type]");
+        const checklistType = section?.dataset.templateType;
+        const nodeId = input.dataset.nodeId;
+        if (!checklistType || !nodeId) return;
+
+        updateTemplateDraft(space.id, checklistType, (nodes) =>
+          updateTemplateNode(nodes, nodeId, (node) => ({
+            ...node,
+            title: input.value,
+          })),
+        );
+      });
+    });
+
+    Array.from(wrapper.querySelectorAll('[data-action="add-template-root"]')).forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const checklistType = button.dataset.templateType;
+        if (!checklistType) return;
+
+        updateTemplateDraft(space.id, checklistType, (nodes) => [...nodes, createTemplateNode("major")]);
+        setManageDetailsOpen(space.id, true);
+        renderManageSpaces();
+      });
+    });
+
+    Array.from(wrapper.querySelectorAll('[data-action="add-template-child"]')).forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const section = button.closest("[data-template-type]");
+        const checklistType = section?.dataset.templateType;
+        const nodeId = button.dataset.nodeId;
+        const depth = Number(button.dataset.nodeDepth ?? 0);
+        if (!checklistType || !nodeId) return;
+
+        updateTemplateDraft(space.id, checklistType, (nodes) =>
+          updateTemplateNode(nodes, nodeId, (node) => ({
+            ...node,
+            children: [
+              ...(node.children ?? []),
+              createTemplateNode(depth === 0 ? "middle" : "small"),
+            ],
+          })),
+        );
+        setManageDetailsOpen(space.id, true);
+        renderManageSpaces();
+      });
+    });
+
+    Array.from(wrapper.querySelectorAll('[data-action="delete-template-node"]')).forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const section = button.closest("[data-template-type]");
+        const checklistType = section?.dataset.templateType;
+        const nodeId = button.dataset.nodeId;
+        if (!checklistType || !nodeId) return;
+
+        updateTemplateDraft(space.id, checklistType, (nodes) => removeTemplateNode(nodes, nodeId));
+        setManageDetailsOpen(space.id, true);
+        renderManageSpaces();
+      });
     });
 
     saveButton.addEventListener("click", async () => {
       try {
         saveButton.disabled = true;
+        const nextDraft = getManageTemplateDraft(space);
         await state.repository.updateSpace(space.id, {
-          open_checklist_template: openInput.value.trim(),
-          always_checklist_template: alwaysInput.value.trim(),
-          close_checklist_template: closeInput.value.trim(),
+          open_checklist_template: serializeTemplateData(nextDraft.open),
+          always_checklist_template: serializeTemplateData(nextDraft.always),
+          close_checklist_template: serializeTemplateData(nextDraft.close),
         });
+        clearManageTemplateDraft(space.id);
         setManageDetailsOpen(space.id, true);
         await refresh();
       } catch (error) {
@@ -1056,7 +1672,7 @@ function buildHistoryItemMarkup(entry, comments) {
   `;
 }
 
-function buildHistoryGroupMarkup(title, entries, archiveDate, checklistType) {
+function buildHistoryGroupMarkup(title, entries, archiveDate) {
   const body = entries.length
     ? entries
         .map((entry) => buildHistoryItemMarkup(entry, getArchivedComments(archiveDate, entry.space_id)))
@@ -1077,7 +1693,9 @@ function buildHistoryGroupMarkup(title, entries, archiveDate, checklistType) {
 }
 
 function renderHistory() {
-  const archives = state.bootstrap?.archived_checks ?? [];
+  const archives = (state.bootstrap?.archived_checks ?? []).filter(
+    (item) => item.checklist_type === "open" || item.checklist_type === "close",
+  );
   const days = buildCalendarDays(state.calendarMonth);
   const archiveMap = new Map();
   const retention = Number(getSettings().history_limit ?? 10);
@@ -1095,7 +1713,7 @@ function renderHistory() {
   );
   setText(
     elements.historyRetentionCopy,
-    `오픈, 상시, 마감 결과는 매일 자정에 자동 기록됩니다. 현재 설정은 최근 ${retention}일 보관입니다.`,
+    `오픈과 마감 결과는 매일 자정에 자동 기록됩니다. 현재 설정은 최근 ${retention}일 보관입니다.`,
   );
 
   setHtml(
@@ -1104,7 +1722,6 @@ function renderHistory() {
       .map((day) => {
         const entries = archiveMap.get(day.key) ?? [];
         const openCount = entries.filter((item) => item.checklist_type === "open").length;
-        const alwaysCount = entries.filter((item) => item.checklist_type === "always").length;
         const closeCount = entries.filter((item) => item.checklist_type === "close").length;
         const classes = [
           "calendar-day",
@@ -1119,7 +1736,6 @@ function renderHistory() {
             <div class="calendar-day__number">${day.day}</div>
             <div class="calendar-day__meta">
               ${openCount ? `<span class="helper-text"><span class="calendar-dot"></span> 오픈 ${openCount}</span>` : ""}
-              ${alwaysCount ? `<span class="helper-text"><span class="calendar-dot is-always"></span> 상시 ${alwaysCount}</span>` : ""}
               ${closeCount ? `<span class="helper-text"><span class="calendar-dot is-close"></span> 마감 ${closeCount}</span>` : ""}
             </div>
           </button>
@@ -1139,15 +1755,13 @@ function renderHistory() {
     (a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0),
   );
   const openEntries = selectedEntries.filter((item) => item.checklist_type === "open");
-  const alwaysEntries = selectedEntries.filter((item) => item.checklist_type === "always");
   const closeEntries = selectedEntries.filter((item) => item.checklist_type === "close");
 
   setHtml(
     elements.historyList,
     [
-      buildHistoryGroupMarkup("오픈 기록", openEntries, state.selectedDate, "open"),
-      buildHistoryGroupMarkup("상시 기록", alwaysEntries, state.selectedDate, "always"),
-      buildHistoryGroupMarkup("마감 기록", closeEntries, state.selectedDate, "close"),
+      buildHistoryGroupMarkup("오픈 기록", openEntries, state.selectedDate),
+      buildHistoryGroupMarkup("마감 기록", closeEntries, state.selectedDate),
     ].join(""),
   );
 }
@@ -1195,7 +1809,7 @@ async function notifyOpenChecklistIfNeeded() {
   }
 
   if (!alerted && document.visibilityState === "visible") {
-    window.alert(message);
+    showToast(message);
     alerted = true;
   }
 
@@ -1276,38 +1890,23 @@ function bindTabs() {
       renderSpaces();
     });
   });
-
-  elements.openOverview?.addEventListener("click", () => {
-    state.selectedChecklistType = "open";
-    activatePanel("checklist");
-    renderOverview();
-    renderChecklistTabs();
-    renderChecklistSummary();
-    renderSpaces();
-  });
-
-  elements.alwaysOverview?.addEventListener("click", () => {
-    state.selectedChecklistType = "always";
-    activatePanel("checklist");
-    renderOverview();
-    renderChecklistTabs();
-    renderChecklistSummary();
-    renderSpaces();
-  });
-
-  elements.closeOverview?.addEventListener("click", () => {
-    state.selectedChecklistType = "close";
-    activatePanel("checklist");
-    renderOverview();
-    renderChecklistTabs();
-    renderChecklistSummary();
-    renderSpaces();
+  elements.notesTickerButton?.addEventListener("click", () => {
+    if (elements.notesTickerButton?.disabled) return;
+    openNotesSheet();
   });
 }
 
 function bindForms() {
   elements.setupOpenButton?.addEventListener("click", openSetup);
   elements.setupCloseButton?.addEventListener("click", closeSetup);
+  elements.detailSheetClose?.addEventListener("click", closeDetailSheet);
+  elements.notesSheetClose?.addEventListener("click", closeNotesSheet);
+  elements.detailSheetBackdrop?.addEventListener("click", (event) => {
+    if (event.target === elements.detailSheetBackdrop) closeDetailSheet();
+  });
+  elements.notesSheetBackdrop?.addEventListener("click", (event) => {
+    if (event.target === elements.notesSheetBackdrop) closeNotesSheet();
+  });
 
   elements.setupAuthForm?.addEventListener("submit", async (event) => {
     event.preventDefault();

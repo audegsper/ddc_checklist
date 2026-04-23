@@ -1,7 +1,7 @@
 import { createId, getDateKey, getWorkDate } from "./utils.js";
 
 const STORAGE_KEY = "ddc-checklist-state-v4";
-const CHECKLIST_TYPES = ["open", "always", "close"];
+const CHECKLIST_TYPES = ["open", "close"];
 
 const nowIso = () => new Date().toISOString();
 
@@ -32,6 +32,7 @@ const demoState = {
       created_at: nowIso(),
     },
   ],
+  current_category_checks: [],
   current_checks: [],
   current_comments: [],
   archived_checks: [],
@@ -131,6 +132,7 @@ function normalizeState(raw) {
   const state = {
     employees: Array.isArray(raw?.employees) ? raw.employees : [],
     spaces: Array.isArray(raw?.spaces) ? raw.spaces : [],
+    current_category_checks: Array.isArray(raw?.current_category_checks) ? raw.current_category_checks : [],
     current_checks: Array.isArray(raw?.current_checks) ? raw.current_checks : [],
     current_comments: Array.isArray(raw?.current_comments) ? raw.current_comments : [],
     archived_checks: Array.isArray(raw?.archived_checks) ? raw.archived_checks : [],
@@ -222,6 +224,34 @@ function upsertCurrentCheck(state, payload) {
   else state.current_checks.push(next);
 }
 
+function upsertCurrentCategoryCheck(state, payload) {
+  const index = state.current_category_checks.findIndex(
+    (item) =>
+      item.work_date === payload.work_date &&
+      item.checklist_type === payload.checklist_type &&
+      item.space_id === payload.space_id &&
+      item.category_key === payload.category_key,
+  );
+
+  const current = index >= 0 ? state.current_category_checks[index] : null;
+  const next = {
+    id: current?.id ?? createId("category"),
+    work_date: payload.work_date,
+    checklist_type: payload.checklist_type,
+    space_id: payload.space_id,
+    space_name: payload.space_name,
+    category_key: payload.category_key,
+    category_label: payload.category_label ?? current?.category_label ?? "",
+    checked: resolvePatchValue(payload, "checked", current?.checked ?? false),
+    employee_id: resolvePatchValue(payload, "employee_id", current?.employee_id ?? null),
+    employee_name: resolvePatchValue(payload, "employee_name", current?.employee_name ?? ""),
+    updated_at: nowIso(),
+  };
+
+  if (index >= 0) state.current_category_checks[index] = next;
+  else state.current_category_checks.push(next);
+}
+
 function finalizeChecklistForDate(state, checklistType, targetDate) {
   const currentMap = new Map(
     state.current_checks
@@ -253,6 +283,9 @@ function finalizeChecklistForDate(state, checklistType, targetDate) {
   });
 
   state.current_checks = state.current_checks.filter(
+    (item) => !(item.work_date === targetDate && item.checklist_type === checklistType),
+  );
+  state.current_category_checks = state.current_category_checks.filter(
     (item) => !(item.work_date === targetDate && item.checklist_type === checklistType),
   );
 }
@@ -291,6 +324,7 @@ function autoArchiveIfNeeded(state, timezone = "Asia/Seoul") {
   const staleDates = [
     ...new Set(
       [...state.current_checks, ...state.current_comments]
+        .concat(state.current_category_checks)
         .map((item) => item.work_date)
         .filter((workDate) => workDate && workDate < today),
     ),
@@ -345,6 +379,9 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
     async deleteEmployee(employeeId) {
       const state = readState();
       state.employees = state.employees.filter((employee) => employee.id !== employeeId);
+      state.current_category_checks = state.current_category_checks.map((item) =>
+        item.employee_id === employeeId ? { ...item, employee_id: null } : item,
+      );
       state.current_checks = state.current_checks.map((item) =>
         item.employee_id === employeeId ? { ...item, employee_id: null } : item,
       );
@@ -392,6 +429,7 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
     async deleteSpace(spaceId) {
       const state = readState();
       state.spaces = state.spaces.filter((space) => space.id !== spaceId);
+      state.current_category_checks = state.current_category_checks.filter((item) => item.space_id !== spaceId);
       state.current_checks = state.current_checks.filter((item) => item.space_id !== spaceId);
       state.archived_checks = state.archived_checks.filter((item) => item.space_id !== spaceId);
       state.current_comments = state.current_comments.filter((item) => item.space_id !== spaceId);
@@ -459,6 +497,15 @@ export function createLocalRepository(timezone = "Asia/Seoul") {
     async saveCurrentCheck(payload) {
       const state = readState();
       upsertCurrentCheck(state, {
+        ...payload,
+        work_date: payload.work_date ?? getWorkDate(timezone),
+      });
+      writeState(state);
+    },
+
+    async saveCurrentCategoryCheck(payload) {
+      const state = readState();
+      upsertCurrentCategoryCheck(state, {
         ...payload,
         work_date: payload.work_date ?? getWorkDate(timezone),
       });

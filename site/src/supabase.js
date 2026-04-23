@@ -1,6 +1,7 @@
 import { getDateKey, getWorkDate } from "./utils.js";
 
-const CHECKLIST_TYPES = ["open", "always", "close"];
+const CHECKLIST_TYPES = ["open", "close"];
+const CATEGORY_FALLBACK_KEY = "ddc-checklist-current-category-checks-fallback-v1";
 
 async function loadClient() {
   const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
@@ -24,12 +25,109 @@ function normalizeBootstrap(data) {
   return {
     employees: data.employees ?? [],
     spaces: data.spaces ?? [],
+    current_category_checks: data.current_category_checks ?? [],
     current_checks: data.current_checks ?? [],
     current_comments: data.current_comments ?? [],
     archived_checks: data.archived_checks ?? [],
     archived_comments: data.archived_comments ?? [],
     app_settings: settings,
   };
+}
+
+function getErrorMessage(error) {
+  if (!error) return "";
+  if (typeof error === "string") return error;
+  return error.message || error.details || error.hint || JSON.stringify(error);
+}
+
+function isMissingCategoryChecksTable(error) {
+  const message = getErrorMessage(error);
+  return (
+    message.includes("current_category_checks") &&
+    (
+      message.includes("Could not find the table") ||
+      message.includes("schema cache") ||
+      message.includes("Not Found") ||
+      message.includes("404") ||
+      message.includes("does not exist") ||
+      message.includes("42P01")
+    )
+  );
+}
+
+function readCategoryFallback() {
+  try {
+    const raw = window.localStorage.getItem(CATEGORY_FALLBACK_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCategoryFallback(entries) {
+  window.localStorage.setItem(CATEGORY_FALLBACK_KEY, JSON.stringify(entries));
+}
+
+function getCategoryFallbackKey(item) {
+  return [item.work_date, item.checklist_type, item.space_id, item.category_key].join("::");
+}
+
+function pruneCategoryFallback(timezone = "Asia/Seoul") {
+  const today = getWorkDate(timezone);
+  const entries = readCategoryFallback().filter((item) => item.work_date >= today);
+  writeCategoryFallback(entries);
+  return entries;
+}
+
+function upsertCategoryFallback(payload, timezone = "Asia/Seoul") {
+  const workDate = payload.work_date ?? getWorkDate(timezone);
+  const entries = pruneCategoryFallback(timezone);
+  const next = {
+    id:
+      payload.id ??
+      `fallback_${[workDate, payload.checklist_type, payload.space_id, payload.category_key].join("_")}`,
+    work_date: workDate,
+    checklist_type: payload.checklist_type,
+    space_id: payload.space_id,
+    space_name: payload.space_name,
+    category_key: payload.category_key,
+    category_label: payload.category_label ?? "",
+    checked: Boolean(payload.checked),
+    employee_id: payload.employee_id ?? null,
+    employee_name: payload.employee_name ?? "",
+    updated_at: new Date().toISOString(),
+  };
+
+  const index = entries.findIndex((item) => getCategoryFallbackKey(item) === getCategoryFallbackKey(next));
+  if (index >= 0) entries[index] = next;
+  else entries.push(next);
+  writeCategoryFallback(entries);
+}
+
+function removeCategoryFallback(payload, timezone = "Asia/Seoul") {
+  const workDate = payload.work_date ?? getWorkDate(timezone);
+  const next = readCategoryFallback().filter(
+    (item) =>
+      !(
+        item.work_date === workDate &&
+        item.checklist_type === payload.checklist_type &&
+        item.space_id === payload.space_id &&
+        item.category_key === payload.category_key
+      ),
+  );
+  writeCategoryFallback(next);
+}
+
+function mergeCategoryChecks(serverEntries = [], fallbackEntries = []) {
+  const merged = new Map();
+  fallbackEntries.forEach((item) => {
+    merged.set(getCategoryFallbackKey(item), item);
+  });
+  serverEntries.forEach((item) => {
+    merged.set(getCategoryFallbackKey(item), item);
+  });
+  return [...merged.values()];
 }
 
 function hasOwn(object, key) {
@@ -42,7 +140,13 @@ function resolvePatchValue(payload, key, fallback) {
 
 export async function createSupabaseRepository(config) {
   const createClient = await loadClient();
-  const client = createClient(config.supabaseUrl, config.supabaseAnonKey);
+  const client = createClient(config.supabaseUrl, config.supabaseAnonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
   const timezone = config.timezone || "Asia/Seoul";
 
   async function pruneArchivedChecks() {
@@ -163,35 +267,19 @@ export async function createSupabaseRepository(config) {
       if (insertArchiveError) throw insertArchiveError;
     }
 
-    const archiveCommentPayload = (currentComments ?? []).map((comment) => {
-      const space = (spaces ?? []).find((item) => item.id === comment.space_id);
-      return {
-        archive_date: targetDate,
-        checklist_type: checklistType,
-        space_id: comment.space_id,
-        space_name: comment.space_name,
-        employee_id: comment.employee_id ?? null,
-        employee_name: comment.employee_name ?? "",
-        content: comment.content ?? "",
-        sort_order: Number(space?.sort_order ?? 1),
-        created_at: comment.created_at,
-        updated_at: comment.updated_at,
-      };
-    });
-
-    if (archiveCommentPayload.length) {
-      const { error: insertArchiveCommentsError } = await client
-        .from("archived_comments")
-        .insert(archiveCommentPayload);
-      if (insertArchiveCommentsError) throw insertArchiveCommentsError;
-    }
-
     const { error: deleteCurrentChecksError } = await client
       .from("current_checks")
       .delete()
       .eq("work_date", targetDate)
       .eq("checklist_type", checklistType);
     if (deleteCurrentChecksError) throw deleteCurrentChecksError;
+
+    const { error: deleteCurrentCategoryChecksError } = await client
+      .from("current_category_checks")
+      .delete()
+      .eq("work_date", targetDate)
+      .eq("checklist_type", checklistType);
+    if (deleteCurrentCategoryChecksError) throw deleteCurrentCategoryChecksError;
   }
 
   async function finalizeCommentsForDate(targetDate) {
@@ -249,6 +337,7 @@ export async function createSupabaseRepository(config) {
   async function autoArchiveIfNeeded() {
     const today = getWorkDate(timezone);
     const yesterday = getYesterdayKey(timezone);
+    pruneCategoryFallback(timezone);
 
     const { data: settings, error: settingsError } = await client
       .from("app_settings")
@@ -268,9 +357,25 @@ export async function createSupabaseRepository(config) {
     if (staleCheckDatesError) throw staleCheckDatesError;
     if (staleCommentDatesError) throw staleCommentDatesError;
 
+    let staleCategoryCheckDates = [];
+    try {
+      const { data, error } = await client
+        .from("current_category_checks")
+        .select("work_date")
+        .lt("work_date", today);
+      if (error) throw error;
+      staleCategoryCheckDates = data ?? [];
+    } catch (error) {
+      if (!isMissingCategoryChecksTable(error)) throw error;
+    }
+
     if (!settings.last_daily_archive_date) {
       const uniqueStaleDates = [
-        ...new Set([...(staleCheckDates ?? []), ...(staleCommentDates ?? [])].map((item) => item.work_date)),
+        ...new Set(
+          [...(staleCheckDates ?? []), ...(staleCategoryCheckDates ?? []), ...(staleCommentDates ?? [])].map(
+            (item) => item.work_date,
+          ),
+        ),
       ].sort();
       for (const workDate of uniqueStaleDates) {
         for (const checklistType of CHECKLIST_TYPES) {
@@ -309,6 +414,7 @@ export async function createSupabaseRepository(config) {
       }
 
       const workDate = getWorkDate(timezone);
+      const fallbackCategoryChecks = pruneCategoryFallback(timezone);
       const [
         { data: employees, error: employeeError },
         { data: spaces, error: spaceError },
@@ -352,9 +458,24 @@ export async function createSupabaseRepository(config) {
       if (archivedCommentsError) throw archivedCommentsError;
       if (settingsError) throw settingsError;
 
+      let currentCategoryChecks = [];
+      try {
+        const { data, error } = await client
+          .from("current_category_checks")
+          .select("*")
+          .eq("work_date", workDate)
+          .order("updated_at", { ascending: false });
+        if (error) throw error;
+        currentCategoryChecks = mergeCategoryChecks(data ?? [], fallbackCategoryChecks);
+      } catch (error) {
+        if (!isMissingCategoryChecksTable(error)) throw error;
+        currentCategoryChecks = fallbackCategoryChecks;
+      }
+
       return normalizeBootstrap({
         employees,
         spaces,
+        current_category_checks: currentCategoryChecks,
         current_checks: currentChecks,
         current_comments: currentComments,
         archived_checks: archivedChecks,
@@ -569,6 +690,33 @@ export async function createSupabaseRepository(config) {
         const { error } = await client.from("current_checks").insert(nextPayload);
         if (error) throw error;
       }
+    },
+
+    async saveCurrentCategoryCheck(payload) {
+      const workDate = payload.work_date ?? getWorkDate(timezone);
+      const nextPayload = {
+        work_date: workDate,
+        checklist_type: payload.checklist_type,
+        space_id: payload.space_id,
+        space_name: payload.space_name,
+        category_key: payload.category_key,
+        category_label: payload.category_label ?? "",
+        checked: Boolean(payload.checked),
+        employee_id: payload.employee_id ?? null,
+        employee_name: payload.employee_name ?? "",
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await client.from("current_category_checks").upsert(nextPayload, {
+        onConflict: "work_date,checklist_type,space_id,category_key",
+      });
+      if (error) {
+        if (!isMissingCategoryChecksTable(error)) throw error;
+        upsertCategoryFallback(nextPayload, timezone);
+        return;
+      }
+
+      removeCategoryFallback(nextPayload, timezone);
     },
 
     async addCurrentComment(payload) {

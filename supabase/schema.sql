@@ -75,6 +75,34 @@ alter table public.current_checks add column if not exists comment_employee_id u
 alter table public.current_checks add column if not exists comment_employee_name text not null default '';
 alter table public.current_checks add column if not exists updated_at timestamptz not null default now();
 
+create table if not exists public.current_category_checks (
+  id uuid primary key default gen_random_uuid(),
+  work_date date not null,
+  checklist_type text not null,
+  space_id uuid not null references public.spaces(id) on delete cascade,
+  space_name text not null,
+  category_key text not null,
+  category_label text not null default '',
+  checked boolean not null default false,
+  employee_id uuid references public.employees(id) on delete set null,
+  employee_name text not null default '',
+  updated_at timestamptz not null default now(),
+  unique (work_date, checklist_type, space_id, category_key)
+);
+
+alter table public.current_category_checks drop constraint if exists current_category_checks_checklist_type_check;
+alter table public.current_category_checks
+  add constraint current_category_checks_checklist_type_check
+  check (checklist_type in ('open', 'close'));
+
+alter table public.current_category_checks add column if not exists category_key text not null default '';
+alter table public.current_category_checks add column if not exists category_label text not null default '';
+alter table public.current_category_checks add column if not exists employee_id uuid references public.employees(id) on delete set null;
+alter table public.current_category_checks add column if not exists employee_name text not null default '';
+alter table public.current_category_checks add column if not exists updated_at timestamptz not null default now();
+create unique index if not exists idx_current_category_checks_unique
+on public.current_category_checks (work_date, checklist_type, space_id, category_key);
+
 create table if not exists public.current_comments (
   id uuid primary key default gen_random_uuid(),
   work_date date not null,
@@ -268,6 +296,7 @@ alter table public.employees enable row level security;
 alter table public.spaces enable row level security;
 alter table public.app_settings enable row level security;
 alter table public.current_checks enable row level security;
+alter table public.current_category_checks enable row level security;
 alter table public.current_comments enable row level security;
 alter table public.archived_checks enable row level security;
 alter table public.archived_comments enable row level security;
@@ -381,6 +410,35 @@ for delete
 to anon, authenticated
 using (true);
 
+drop policy if exists "public read current category checks" on public.current_category_checks;
+create policy "public read current category checks"
+on public.current_category_checks
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "public insert current category checks" on public.current_category_checks;
+create policy "public insert current category checks"
+on public.current_category_checks
+for insert
+to anon, authenticated
+with check (true);
+
+drop policy if exists "public update current category checks" on public.current_category_checks;
+create policy "public update current category checks"
+on public.current_category_checks
+for update
+to anon, authenticated
+using (true)
+with check (true);
+
+drop policy if exists "public delete current category checks" on public.current_category_checks;
+create policy "public delete current category checks"
+on public.current_category_checks
+for delete
+to anon, authenticated
+using (true);
+
 drop policy if exists "public read current comments" on public.current_comments;
 create policy "public read current comments"
 on public.current_comments
@@ -455,6 +513,7 @@ using (true);
 create index if not exists idx_employees_sort_order on public.employees (sort_order);
 create index if not exists idx_spaces_sort_order on public.spaces (sort_order);
 create index if not exists idx_current_checks_date_type on public.current_checks (work_date, checklist_type);
+create index if not exists idx_current_category_checks_date_type on public.current_category_checks (work_date, checklist_type);
 create index if not exists idx_current_comments_date_type on public.current_comments (work_date, checklist_type);
 create index if not exists idx_archived_checks_date_type on public.archived_checks (archive_date, checklist_type);
 create index if not exists idx_archived_comments_date_type on public.archived_comments (archive_date, checklist_type);

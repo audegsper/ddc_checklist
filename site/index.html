@@ -31,7 +31,7 @@
         <div class="hero__topline">
           <div class="hero__headline">
             <h1 id="app-title">DD 체크리스트</h1>
-            <div id="version-pill" class="version-pill">버전 1.1.1</div>
+            <div id="version-pill" class="version-pill">버전 1.3.0</div>
           </div>
           <button
             id="setup-open-button"
@@ -43,26 +43,17 @@
           </button>
         </div>
 
-        <div class="hero__overview">
-          <button id="open-overview" class="overview-card" type="button">
-            <div class="overview-card__label">오픈 체크리스트</div>
-            <div class="overview-card__stats">
-              <strong id="open-overview-count">확인 0 · 미확인 0</strong>
+        <button id="notes-ticker-button" class="hero__overview ticker-card" type="button">
+          <div class="ticker-card__label-row">
+            <span class="overview-card__label">최근 메모</span>
+            <span class="ticker-card__hint">터치해서 최근 7일 보기</span>
+          </div>
+          <div class="ticker-card__viewport">
+            <div id="notes-ticker-track" class="ticker-card__track">
+              <span class="ticker-card__empty">등록된 메모가 없습니다.</span>
             </div>
-          </button>
-          <button id="always-overview" class="overview-card" type="button">
-            <div class="overview-card__label">상시 체크리스트</div>
-            <div class="overview-card__stats">
-              <strong id="always-overview-count">확인 0 · 미확인 0</strong>
-            </div>
-          </button>
-          <button id="close-overview" class="overview-card" type="button">
-            <div class="overview-card__label">마감 체크리스트</div>
-            <div class="overview-card__stats">
-              <strong id="close-overview-count">확인 0 · 미확인 0</strong>
-            </div>
-          </button>
-        </div>
+          </div>
+        </button>
 
         <div id="employee-card" class="hero__card">
           <div class="field">
@@ -91,7 +82,6 @@
           <div class="summary-card checklist-summary">
             <div class="checklist-switch" role="tablist" aria-label="체크 종류">
               <button class="hero-tab is-active" data-checklist-type="open" type="button">오픈</button>
-              <button class="hero-tab" data-checklist-type="always" type="button">상시</button>
               <button class="hero-tab" data-checklist-type="close" type="button">마감</button>
             </div>
             <div class="checklist-summary__meta">
@@ -108,7 +98,7 @@
             <div>
               <h2>기록</h2>
               <p id="history-retention-copy">
-                오픈, 상시, 마감 결과를 날짜별로 나누어 확인할 수 있습니다.
+                오픈과 마감 결과를 날짜별로 나누어 확인할 수 있습니다.
               </p>
             </div>
           </div>
@@ -303,40 +293,50 @@
 
         <p class="helper-text space-card__owner is-hidden" data-role="owner-state"></p>
 
-        <div class="space-card__details is-hidden" data-role="details-panel">
-          <div class="space-card__details-top">
-            <strong class="space-card__details-title" data-role="details-title"></strong>
-            <button class="ghost-button ghost-button--compact" data-role="details-confirm" type="button">
-              확인
-            </button>
-          </div>
-          <div class="space-card__details-body">
-            <div class="surface">
-              <p class="surface__label">체크 항목</p>
-              <div class="checklist-item-list" data-role="checklist-items"></div>
-            </div>
-
-            <label class="field">
-              <span class="field__label">특이사항 / 공유메모</span>
-              <textarea
-                class="space-card__comment"
-                rows="3"
-                placeholder="공간 메모를 입력해 주세요."
-              ></textarea>
-            </label>
-
-            <div class="space-card__actions">
-              <button class="secondary-button" data-action="save-comment">메모 저장</button>
-              <button class="secondary-button is-subtle is-hidden" data-action="cancel-comment">
-                수정 취소
-              </button>
-            </div>
-
-            <div class="comment-list" data-role="comment-list"></div>
-          </div>
-        </div>
       </article>
     </template>
+
+    <div id="detail-sheet-backdrop" class="sheet-backdrop is-hidden">
+      <div id="detail-sheet" class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="detail-sheet-title">
+        <div class="sheet-panel__header">
+          <div>
+            <strong id="detail-sheet-title">공간 점검</strong>
+            <p id="detail-sheet-subtitle" class="helper-text"></p>
+          </div>
+          <button
+            id="detail-sheet-close"
+            class="icon-button icon-button--ghost"
+            type="button"
+            aria-label="세부내용 닫기"
+          >
+            &times;
+          </button>
+        </div>
+        <div id="detail-sheet-body" class="sheet-panel__body"></div>
+      </div>
+    </div>
+
+    <div id="notes-sheet-backdrop" class="sheet-backdrop is-hidden">
+      <div id="notes-sheet" class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="notes-sheet-title">
+        <div class="sheet-panel__header">
+          <div>
+            <strong id="notes-sheet-title">최근 메모</strong>
+            <p class="helper-text">최근 7일간 등록된 메모를 모아서 볼 수 있습니다.</p>
+          </div>
+          <button
+            id="notes-sheet-close"
+            class="icon-button icon-button--ghost"
+            type="button"
+            aria-label="메모 모아보기 닫기"
+          >
+            &times;
+          </button>
+        </div>
+        <div id="notes-sheet-body" class="sheet-panel__body"></div>
+      </div>
+    </div>
+
+    <div id="app-toast" class="app-toast is-hidden" role="status" aria-live="polite"></div>
 
     <script src="./app-config.js"></script>
     <script type="module" src="./src/app.js"></script>
