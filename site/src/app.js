@@ -13,7 +13,7 @@ import {
   getWorkDate,
 } from "./utils.js";
 
-const APP_VERSION = "버전 1.4.1";
+const APP_VERSION = "버전 1.4.2";
 const APP_DISPLAY_NAME = "DD 체크리스트";
 const config = window.__APP_CONFIG__ ?? {};
 const APP_TIMEZONE = config.timezone || "Asia/Seoul";
@@ -494,19 +494,14 @@ function buildChecklistPrompt(space, checklistType, isChecked) {
   }
 
   const groups = getChecklistGroups(space, checklistType);
-  const alwaysGroups = getChecklistGroups(space, "always");
   const groupLines = groups.length
     ? groups.map((group, index) => `${index + 1}. ${group.title}`).join("\n")
     : "등록된 대분류가 없습니다.";
-  const alwaysLines = alwaysGroups.length
-    ? ["", "상시 체크 항목", ...alwaysGroups.map((group, index) => `${index + 1}. ${group.title}`)].join("\n")
-    : "";
 
   return [
     `${space.name} 공간의 ${checklistLabel} 대분류입니다.`,
     "",
     groupLines,
-    alwaysLines,
     "",
     "모든 대분류를 확인했다면 확인을 눌러 주세요.",
   ].join("\n");
