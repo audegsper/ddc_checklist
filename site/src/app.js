@@ -13,7 +13,7 @@ import {
   getWorkDate,
 } from "./utils.js";
 
-const APP_VERSION = "버전 1.4.2";
+const APP_VERSION = "버전 1.4.3";
 const APP_DISPLAY_NAME = "DD 체크리스트";
 const config = window.__APP_CONFIG__ ?? {};
 const APP_TIMEZONE = config.timezone || "Asia/Seoul";
@@ -62,6 +62,7 @@ const state = {
   toastTimer: null,
   openAlertTimer: null,
   hasBootstrapped: false,
+  maintenanceDate: "",
 };
 
 let elements = {};
@@ -906,8 +907,8 @@ async function animateListReorder(container, selector, attributeName, action) {
   });
 }
 
-async function refresh() {
-  state.bootstrap = await state.repository.getBootstrap();
+async function refresh(options) {
+  state.bootstrap = await state.repository.getBootstrap(options);
 
   const activeEmployees = state.bootstrap.employees ?? [];
   if (!activeEmployees.some((item) => item.id === state.selectedEmployeeId)) {
@@ -951,6 +952,39 @@ async function refresh() {
   setLoading(false);
   state.hasBootstrapped = true;
   startOpenAlertWatcher();
+  const warnings = state.bootstrap.warnings ?? [];
+  const notice = document.getElementById("data-notice");
+  setText(notice, warnings.join(" "));
+  toggleClass(notice, "is-hidden", !warnings.length);
+  scheduleDailyMaintenance();
+}
+
+// Run once per work date, after the current checklist is visible.
+function scheduleDailyMaintenance() {
+  const today = getWorkDate(APP_TIMEZONE);
+  if (!state.repository.maintainDailyArchive || state.maintenanceDate === today) return;
+  state.maintenanceDate = today;
+  window.setTimeout(async () => {
+    let archiveFailed = false;
+    try {
+      await state.repository.maintainDailyArchive();
+    } catch (error) {
+      console.warn("자동 기록 보관 처리에 실패했습니다.", error);
+      archiveFailed = true;
+    }
+    try {
+      await refresh();
+    } catch (error) {
+      console.warn("기록 새로고침에 실패했습니다.", error);
+      archiveFailed = true;
+    }
+    if (archiveFailed) {
+      state.maintenanceDate = "";
+      const notice = document.getElementById("data-notice");
+      setText(notice, "지난 기록을 새로고침하지 못했습니다. 다시 시도하려면 새로고침해 주세요.");
+      toggleClass(notice, "is-hidden", false);
+    }
+  }, 0);
 }
 
 function renderHeader() {
@@ -2329,16 +2363,18 @@ async function init() {
     bindTabs();
     bindForms();
     state.repository = await createRepository();
-    await refresh();
+    await refresh({ includeHistory: false });
+
   } catch (error) {
     setLoading(false);
     renderHeader();
     setText(elements.setupStatus, `앱 초기화에 실패했습니다. ${getErrorMessage(error)}`);
-    if (isMissingSupabaseTable(error)) {
-      showSchemaHelp(error);
-      return;
-    }
-    throw error;
+    const message = isMissingSupabaseTable(error)
+      ? buildSupabaseSchemaHelp()
+      : "데이터 서버에 연결하지 못했습니다. 인터넷 연결과 Supabase 프로젝트 실행 상태를 확인한 뒤 다시 시도해 주세요. 저장된 항목은 연결이 복구되면 표시됩니다.";
+    setText(document.getElementById("load-error-message"), message);
+    toggleClass(document.getElementById("load-error"), "is-hidden", false);
+    console.error("앱 초기화 실패", error);
   }
 }
 

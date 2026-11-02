@@ -1,12 +1,9 @@
 import { getDateKey, getWorkDate } from "./utils.js";
+import { createClient } from "@supabase/supabase-js";
+import { createTimedFetch, readAll } from "./network.js";
 
 const CHECKLIST_TYPES = ["open", "close"];
 const CATEGORY_FALLBACK_KEY = "ddc-checklist-current-category-checks-fallback-v1";
-
-async function loadClient() {
-  const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
-  return createClient;
-}
 
 function getYesterdayKey(timezone = "Asia/Seoul") {
   return getDateKey(new Date(Date.now() - 24 * 60 * 60 * 1000), timezone);
@@ -145,9 +142,10 @@ function resolvePatchValue(payload, key, fallback) {
   return hasOwn(payload, key) ? payload[key] : fallback;
 }
 
-export async function createSupabaseRepository(config) {
-  const createClient = await loadClient();
-  const client = createClient(config.supabaseUrl, config.supabaseAnonKey, {
+export async function createSupabaseRepository(config, suppliedClient) {
+  const client = suppliedClient ?? createClient(config.supabaseUrl, config.supabaseAnonKey, {
+    db: { retry: false },
+    global: { fetch: createTimedFetch() },
     auth: {
       persistSession: false,
       autoRefreshToken: false,
@@ -352,7 +350,7 @@ export async function createSupabaseRepository(config) {
       .limit(1)
       .maybeSingle();
     if (settingsError) throw settingsError;
-    if (!settings) return;
+    if (!settings || settings.last_daily_archive_date === yesterday) return;
 
     const [
       { data: staleCheckDates, error: staleCheckDatesError },
@@ -413,82 +411,51 @@ export async function createSupabaseRepository(config) {
   }
 
   return {
-    async getBootstrap() {
-      try {
-        await autoArchiveIfNeeded();
-      } catch (error) {
-        console.warn("자동 기록 보관 처리에 실패했습니다.", error);
-      }
+    maintainDailyArchive: autoArchiveIfNeeded,
 
+    async getBootstrap({ includeHistory = true } = {}) {
       const workDate = getWorkDate(timezone);
-      const fallbackCategoryChecks = pruneCategoryFallback(timezone);
-      const [
-        { data: employees, error: employeeError },
-        { data: spaces, error: spaceError },
-        { data: currentChecks, error: currentError },
-        { data: currentComments, error: currentCommentsError },
-        { data: archivedChecks, error: archivedError },
-        { data: archivedComments, error: archivedCommentsError },
-        { data: settings, error: settingsError },
-      ] = await Promise.all([
-        client.from("employees").select("*").eq("is_active", true).order("sort_order").order("created_at"),
-        client.from("spaces").select("*").eq("is_active", true).order("sort_order").order("created_at"),
-        client
-          .from("current_checks")
-          .select("*")
-          .eq("work_date", workDate)
-          .order("updated_at", { ascending: false }),
-        client
-          .from("current_comments")
-          .select("*")
-          .eq("work_date", workDate)
-          .order("created_at"),
-        client
-          .from("archived_checks")
-          .select("*")
-          .order("archive_date", { ascending: false })
-          .order("sort_order"),
-        client
-          .from("archived_comments")
-          .select("*")
-          .order("archive_date", { ascending: false })
-          .order("sort_order")
-          .order("created_at"),
+      const warnings = [];
+      const read = (table, configure = (query) => query) =>
+        readAll(() => configure(client.from(table).select("*", { count: "exact" })).order("id"));
+      const readHistory = async (table) => {
+        try {
+          return await read(table, (query) => query.order("archive_date", { ascending: false }));
+        } catch (error) {
+          console.warn("기록을 불러오지 못했습니다.", error);
+          warnings.push("지난 기록 일부를 불러오지 못했습니다. 새로고침해 다시 시도해 주세요.");
+          return [];
+        }
+      };
+      const readCategories = async () => {
+        const fallback = pruneCategoryFallback(timezone);
+        try {
+          const entries = await read("current_category_checks", (query) => query.eq("work_date", workDate));
+          return mergeCategoryChecks(entries, fallback);
+        } catch (error) {
+          if (!isMissingCategoryChecksTable(error)) throw error;
+          return fallback;
+        }
+      };
+      const [employees, spaces, checks, comments, categories, archives, archivedComments, settings] = await Promise.all([
+        read("employees", (query) => query.eq("is_active", true).order("sort_order").order("created_at")),
+        read("spaces", (query) => query.eq("is_active", true).order("sort_order").order("created_at")),
+        read("current_checks", (query) => query.eq("work_date", workDate).order("updated_at", { ascending: false })),
+        read("current_comments", (query) => query.eq("work_date", workDate).order("created_at")),
+        readCategories(),
+        includeHistory ? readHistory("archived_checks") : [],
+        includeHistory ? readHistory("archived_comments") : [],
         client.from("app_settings").select("*").limit(1),
       ]);
-
-      if (employeeError) throw employeeError;
-      if (spaceError) throw spaceError;
-      if (currentError) throw currentError;
-      if (currentCommentsError) throw currentCommentsError;
-      if (archivedError) throw archivedError;
-      if (archivedCommentsError) throw archivedCommentsError;
-      if (settingsError) throw settingsError;
-
-      let currentCategoryChecks = [];
-      try {
-        const { data, error } = await client
-          .from("current_category_checks")
-          .select("*")
-          .eq("work_date", workDate)
-          .order("updated_at", { ascending: false });
-        if (error) throw error;
-        currentCategoryChecks = mergeCategoryChecks(data ?? [], fallbackCategoryChecks);
-      } catch (error) {
-        if (!isMissingCategoryChecksTable(error)) throw error;
-        currentCategoryChecks = fallbackCategoryChecks;
-      }
-
-      return normalizeBootstrap({
-        employees,
-        spaces,
-        current_category_checks: currentCategoryChecks,
-        current_checks: currentChecks,
-        current_comments: currentComments,
-        archived_checks: archivedChecks,
-        archived_comments: archivedComments,
-        settings,
-      });
+      if (settings.error) throw settings.error;
+      return {
+        ...normalizeBootstrap({
+          employees, spaces, current_checks: checks, current_comments: comments,
+          current_category_checks: categories, archived_checks: archives,
+          archived_comments: archivedComments, settings: settings.data,
+        }),
+        warnings: includeHistory ? [...new Set(warnings)] : ["지난 기록을 불러오는 중입니다."],
+      };
     },
 
     async addEmployee(name) {

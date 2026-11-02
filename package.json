@@ -1,0 +1,17 @@
+{
+  "name": "ddc-checklist",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild site/src/app.js --bundle --minify --format=esm --target=es2020 --outfile=site/dist/app.js",
+    "test": "node --test tests/*.test.js",
+    "test:browser": "npm run build && playwright test tests/browser.spec.js --workers=1"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.118.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "esbuild": "^0.28.2"
+  }
+}
