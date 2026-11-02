@@ -13,7 +13,7 @@ import {
   getWorkDate,
 } from "./utils.js";
 
-const APP_VERSION = "버전 1.4.3";
+const APP_VERSION = "버전 1.5.0";
 const APP_DISPLAY_NAME = "DD 체크리스트";
 const config = window.__APP_CONFIG__ ?? {};
 const APP_TIMEZONE = config.timezone || "Asia/Seoul";
@@ -28,6 +28,9 @@ const TEMPLATE_TYPES = [
   { id: "close", label: "마감", templateKey: "close_checklist_template" },
 ];
 const RECENT_NOTE_DAYS = 7;
+// Author name stored on memos while the employee feature is off; it is never displayed.
+const SHARED_AUTHOR_NAME = "닥디";
+const REALTIME_REFRESH_DELAY = 300;
 
 function getChecklistTypeByTime(date = new Date()) {
   const { hour } = getTimePartsInTimeZone(APP_TIMEZONE, date);
@@ -63,6 +66,11 @@ const state = {
   openAlertTimer: null,
   hasBootstrapped: false,
   maintenanceDate: "",
+  setupPassword: "",
+  refreshSeq: 0,
+  realtimeTimer: null,
+  realtimePending: false,
+  stopRealtime: null,
 };
 
 let elements = {};
@@ -95,6 +103,21 @@ function initializeElements() {
     settingsForm: document.getElementById("settings-form"),
     historyLimit: document.getElementById("history-limit"),
     showEmployeeToggle: document.getElementById("show-employee-toggle"),
+    useEmployeeToggle: document.getElementById("use-employee-toggle"),
+    employeeCard: document.getElementById("employee-card"),
+    notifyForm: document.getElementById("notify-form"),
+    notifyEnabled: document.getElementById("notify-enabled"),
+    notifyAccessKey: document.getElementById("notify-access-key"),
+    notifyAccessSecret: document.getElementById("notify-access-secret"),
+    notifyGroupId: document.getElementById("notify-group-id"),
+    notifyGroupSelect: document.getElementById("notify-group-select"),
+    notifyBotName: document.getElementById("notify-bot-name"),
+    notifyOpenTime: document.getElementById("notify-open-time"),
+    notifyCloseTime: document.getElementById("notify-close-time"),
+    notifyLoadGroups: document.getElementById("notify-load-groups"),
+    notifyTestOpen: document.getElementById("notify-test-open"),
+    notifyTestClose: document.getElementById("notify-test-close"),
+    notifyStatus: document.getElementById("notify-status"),
     setupStatus: document.getElementById("setup-status"),
     template: document.getElementById("space-card-template"),
     tabs: Array.from(document.querySelectorAll(".tab")),
@@ -161,7 +184,13 @@ function getErrorMessage(error) {
 
 function isMissingSupabaseTable(error) {
   const message = getErrorMessage(error);
-  return message.includes("Could not find the table") || message.includes("PGRST205");
+  return (
+    message.includes("Could not find the table") ||
+    message.includes("PGRST205") ||
+    message.includes("Could not find the function") ||
+    message.includes("PGRST202") ||
+    (message.includes("Could not find the") && message.includes("column"))
+  );
 }
 
 function buildSupabaseSchemaHelp() {
@@ -184,10 +213,25 @@ function getSettings() {
       history_limit: 10,
       timezone: APP_TIMEZONE,
       show_employee_name: true,
+      use_employee_feature: true,
       admin_password: "8883",
       last_daily_archive_date: null,
     }
   );
+}
+
+function isEmployeeFeatureOn() {
+  return getSettings().use_employee_feature !== false;
+}
+
+function shouldShowCheckOwner() {
+  return isEmployeeFeatureOn() && Boolean(getSettings().show_employee_name);
+}
+
+// Who a new check or memo is attributed to; null means the user must pick an employee first.
+function getActingEmployee() {
+  if (!isEmployeeFeatureOn()) return { id: null, name: "" };
+  return getSelectedEmployee();
 }
 
 async function createRepository() {
@@ -509,7 +553,7 @@ function buildChecklistPrompt(space, checklistType, isChecked) {
 }
 
 function buildOwnerText(space, checklistType = state.selectedChecklistType) {
-  if (!getSettings().show_employee_name) return "";
+  if (!shouldShowCheckOwner()) return "";
 
   const status = buildChecklistStatus(space, checklistType);
   if (!status.checkedCount) return "";
@@ -554,7 +598,13 @@ function renderTemplateTreeMarkup(nodes, depth = 0) {
 }
 
 function canEditComment(comment) {
+  if (!isEmployeeFeatureOn()) return true;
   return Boolean(state.selectedEmployeeId && comment.employee_id && comment.employee_id === state.selectedEmployeeId);
+}
+
+function renderCommentAuthor(comment) {
+  if (!isEmployeeFeatureOn()) return "<span></span>";
+  return `<strong>${escapeHtml(comment.employee_name || "이름 없음")}</strong>`;
 }
 
 function renderCurrentCommentsMarkup(comments) {
@@ -576,7 +626,7 @@ function renderCurrentCommentsMarkup(comments) {
       return `
         <article class="comment-item">
           <div class="comment-item__top">
-            <strong>${escapeHtml(comment.employee_name || "이름 없음")}</strong>
+            ${renderCommentAuthor(comment)}
             <span class="helper-text">${escapeHtml(formatKoreanDateTime(comment.updated_at, APP_TIMEZONE))}</span>
           </div>
           <p class="comment-item__body">${escapeHtml(comment.content)}</p>
@@ -597,7 +647,7 @@ function renderHistoryCommentsMarkup(comments) {
       (comment) => `
         <article class="comment-item is-history">
           <div class="comment-item__top">
-            <strong>${escapeHtml(comment.employee_name || "이름 없음")}</strong>
+            ${renderCommentAuthor(comment)}
             <span class="helper-text">${escapeHtml(formatKoreanDateTime(comment.updated_at ?? comment.archived_at, APP_TIMEZONE))}</span>
           </div>
           <p class="comment-item__body">${escapeHtml(comment.content)}</p>
@@ -625,7 +675,7 @@ function renderChecklistGroupCards(
     .map((group) => {
       const record = checklistType ? getCurrentCategoryCheck(space.id, checklistType, group.id) : null;
       const ownerText =
-        !readOnly && getSettings().show_employee_name && record?.checked && record.employee_name
+        !readOnly && shouldShowCheckOwner() && record?.checked && record.employee_name
           ? record.employee_name
           : "";
 
@@ -783,7 +833,7 @@ function getRecentNoteEntries(days = RECENT_NOTE_DAYS) {
 function formatRecentNoteLine(comment) {
   return [
     comment.space_name,
-    comment.employee_name || "이름 없음",
+    ...(isEmployeeFeatureOn() ? [comment.employee_name || "이름 없음"] : []),
     comment.content,
     formatKoreanDateTime(comment.timestamp, APP_TIMEZONE),
   ].join(" · ");
@@ -908,7 +958,11 @@ async function animateListReorder(container, selector, attributeName, action) {
 }
 
 async function refresh(options) {
-  state.bootstrap = await state.repository.getBootstrap(options);
+  // A slower, older response must not overwrite data from a newer one.
+  const seq = ++state.refreshSeq;
+  const bootstrap = await state.repository.getBootstrap(options);
+  if (seq !== state.refreshSeq) return;
+  state.bootstrap = bootstrap;
 
   const activeEmployees = state.bootstrap.employees ?? [];
   if (!activeEmployees.some((item) => item.id === state.selectedEmployeeId)) {
@@ -957,6 +1011,50 @@ async function refresh(options) {
   setText(notice, warnings.join(" "));
   toggleClass(notice, "is-hidden", !warnings.length);
   scheduleDailyMaintenance();
+}
+
+// Re-rendering replaces inputs, so wait while someone is typing and catch up on blur.
+function isUserEditing() {
+  const active = document.activeElement;
+  if (!active) return false;
+  if (active.tagName === "TEXTAREA" || active.tagName === "SELECT") return true;
+  if (active.tagName !== "INPUT") return false;
+  return !["checkbox", "radio", "button", "submit"].includes(active.type);
+}
+
+function scheduleRealtimeRefresh() {
+  if (state.realtimeTimer) window.clearTimeout(state.realtimeTimer);
+  state.realtimeTimer = window.setTimeout(() => {
+    state.realtimeTimer = null;
+    if (!state.hasBootstrapped || isUserEditing() || state.draggedEmployeeId || state.draggedSpaceId) {
+      state.realtimePending = true;
+      return;
+    }
+    state.realtimePending = false;
+    refresh().catch((error) => {
+      console.warn("실시간 변경 내용을 불러오지 못했습니다.", error);
+    });
+  }, REALTIME_REFRESH_DELAY);
+}
+
+function startRealtimeSync() {
+  if (state.stopRealtime || !state.repository.subscribeChanges) return;
+  try {
+    state.stopRealtime = state.repository.subscribeChanges(scheduleRealtimeRefresh);
+  } catch (error) {
+    console.warn("실시간 동기화를 시작하지 못했습니다.", error);
+  }
+
+  document.addEventListener("focusout", () => {
+    if (state.realtimePending) scheduleRealtimeRefresh();
+  });
+  document.addEventListener("dragend", () => {
+    if (state.realtimePending) scheduleRealtimeRefresh();
+  });
+  // Phones suspend background sockets; catch up when the app comes back.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") scheduleRealtimeRefresh();
+  });
 }
 
 // Run once per work date, after the current checklist is visible.
@@ -1047,6 +1145,7 @@ function renderChecklistTabs() {
 
 function renderEmployees() {
   const employees = state.bootstrap?.employees ?? [];
+  toggleClass(elements.employeeCard, "is-hidden", !isEmployeeFeatureOn());
   if (elements.employeeButtons) elements.employeeButtons.innerHTML = "";
 
   if (!employees.length) {
@@ -1106,6 +1205,11 @@ async function saveChecklistCategoryChanges(space, checklistType, categoryPayloa
     ]),
   );
   await state.repository.saveCurrentCheck(buildSummaryPayload(space, checklistType, overrides));
+
+  // The server decides whether everything is checked and sends the report at most once.
+  state.repository.notifyIfComplete?.(checklistType).catch((error) => {
+    console.warn("체크 결과 알림 확인에 실패했습니다.", error);
+  });
 }
 
 async function toggleChecklistSummary(space, checklistType) {
@@ -1117,7 +1221,8 @@ async function toggleChecklistSummary(space, checklistType) {
   }
 
   const willCheck = !status.complete;
-  if (willCheck && !getSelectedEmployee()) {
+  const employee = getActingEmployee();
+  if (willCheck && !employee) {
     window.alert("담당 직원을 먼저 선택해 주세요.");
     renderSpaces();
     return;
@@ -1129,7 +1234,6 @@ async function toggleChecklistSummary(space, checklistType) {
     return;
   }
 
-  const employee = getSelectedEmployee();
   const payloads = status.groups.map((group) => ({
     checklist_type: checklistType,
     space_id: space.id,
@@ -1147,13 +1251,13 @@ async function toggleChecklistSummary(space, checklistType) {
 async function toggleChecklistCategory(space, checklistType, group) {
   const current = getCurrentCategoryCheck(space.id, checklistType, group.id);
   const willCheck = !current?.checked;
+  const employee = getActingEmployee();
 
-  if (willCheck && !getSelectedEmployee()) {
+  if (willCheck && !employee) {
     window.alert("담당 직원을 먼저 선택해 주세요.");
     return;
   }
 
-  const employee = getSelectedEmployee();
   await saveChecklistCategoryChanges(space, checklistType, [
     {
       checklist_type: checklistType,
@@ -1181,7 +1285,9 @@ async function saveSpaceComment(spaceId) {
     return;
   }
 
-  const employee = getSelectedEmployee();
+  const employee = isEmployeeFeatureOn()
+    ? getSelectedEmployee()
+    : { id: null, name: SHARED_AUTHOR_NAME };
   if (!employee) {
     window.alert("담당 직원을 먼저 선택해 주세요.");
     return;
@@ -1525,7 +1631,7 @@ function renderNotesSheet() {
                         <strong>${escapeHtml(comment.space_name)}</strong>
                         <span class="helper-text">${escapeHtml(formatKoreanDateTime(comment.timestamp, APP_TIMEZONE))}</span>
                       </div>
-                      <p class="helper-text">${escapeHtml(comment.employee_name || "이름 없음")}</p>
+                      ${isEmployeeFeatureOn() ? `<p class="helper-text">${escapeHtml(comment.employee_name || "이름 없음")}</p>` : ""}
                       <p class="comment-item__body">${escapeHtml(comment.content)}</p>
                     </article>
                   `,
@@ -1971,7 +2077,7 @@ function renderManageSpaces() {
 
 function buildHistoryItemMarkup(entry, comments) {
   const ownerText =
-    getSettings().show_employee_name && entry.employee_name
+    shouldShowCheckOwner() && entry.employee_name
       ? ` · 확인 ${escapeHtml(entry.employee_name)}`
       : "";
 
@@ -2092,6 +2198,7 @@ function renderSettings() {
   const settings = getSettings();
   if (elements.historyLimit) elements.historyLimit.value = String(settings.history_limit ?? 10);
   if (elements.showEmployeeToggle) elements.showEmployeeToggle.checked = Boolean(settings.show_employee_name);
+  if (elements.useEmployeeToggle) elements.useEmployeeToggle.checked = isEmployeeFeatureOn();
   renderEmployeeManager();
   renderManageSpaces();
 }
@@ -2155,6 +2262,209 @@ function startOpenAlertWatcher() {
   notifyOpenChecklistIfNeeded().catch((error) => {
     console.warn("오픈 체크리스트 알림 처리에 실패했습니다.", error);
   });
+}
+
+const NOTIFY_TRIGGER_LABELS = { complete: "전체 완료", scheduled: "정기", manual: "테스트" };
+
+function setNotifyStatus(message) {
+  setText(elements.notifyStatus, message);
+}
+
+function describeNotifyError(error) {
+  if (isMissingSupabaseTable(error)) {
+    return "알림 기능용 DB 설정이 없습니다. Supabase SQL Editor에서 supabase/schema.sql을 다시 실행해 주세요.";
+  }
+  return getErrorMessage(error);
+}
+
+function describeHttpResult(response) {
+  if (!response) return "응답을 기다리는 중입니다. 잠시 후 설정을 다시 열어 결과를 확인해 주세요.";
+  if (response.timed_out) return "채널톡 서버 응답 시간이 초과되었습니다.";
+  if (response.error) return `요청 실패: ${response.error}`;
+  if (response.status_code >= 200 && response.status_code < 300) return "";
+  const hint = response.status_code === 401
+    ? " (Access Key/Secret을 확인해 주세요)"
+    : response.status_code === 404
+      ? " (팀챗 그룹 ID를 확인해 주세요)"
+      : "";
+  return `채널톡 오류 ${response.status_code}${hint}\n${String(response.content ?? "").slice(0, 300)}`;
+}
+
+function formatNotificationLog(log) {
+  const parts = [
+    formatKoreanDateTime(log.created_at, APP_TIMEZONE),
+    getChecklistLabel(log.checklist_type),
+    NOTIFY_TRIGGER_LABELS[log.trigger] ?? log.trigger,
+  ];
+  if (log.status_code >= 200 && log.status_code < 300) parts.push("성공");
+  else if (log.status_code || log.error) {
+    parts.push(`실패${log.status_code ? ` ${log.status_code}` : ""}${log.error ? `: ${String(log.error).slice(0, 120)}` : ""}`);
+  } else parts.push("발송 요청됨");
+  return parts.join(" · ");
+}
+
+async function loadNotificationSettings() {
+  if (!elements.notifyForm) return;
+  if (!state.repository?.supportsNotifications) {
+    setNotifyStatus("채널톡 알림은 Supabase 연결 모드에서만 사용할 수 있습니다.");
+    return;
+  }
+
+  try {
+    const settings = await state.repository.getNotificationSettings(state.setupPassword);
+    elements.notifyEnabled.checked = Boolean(settings.enabled);
+    elements.notifyAccessKey.value = "";
+    elements.notifyAccessSecret.value = "";
+    elements.notifyAccessKey.placeholder = settings.has_access_key
+      ? `저장됨 ${settings.access_key_hint} · 바꿀 때만 입력`
+      : "채널톡 API Access Key";
+    elements.notifyAccessSecret.placeholder = settings.has_access_secret
+      ? "저장됨 · 바꿀 때만 입력"
+      : "채널톡 API Access Secret";
+    elements.notifyGroupId.value = settings.channel_group_id ?? "";
+    elements.notifyBotName.value = settings.bot_name ?? "";
+    elements.notifyOpenTime.value = settings.open_report_time ?? "10:00";
+    elements.notifyCloseTime.value = settings.close_report_time ?? "20:00";
+    const logs = settings.logs ?? [];
+    setNotifyStatus(
+      logs.length ? ["최근 발송 기록", ...logs.map(formatNotificationLog)].join("\n") : "아직 발송 기록이 없습니다.",
+    );
+  } catch (error) {
+    setNotifyStatus(`알림 설정을 불러오지 못했습니다.\n${describeNotifyError(error)}`);
+  }
+}
+
+// Accepts a bare id or a pasted team chat URL whose last number is the group id.
+function readGroupIdInput() {
+  const raw = elements.notifyGroupId?.value.trim() ?? "";
+  if (!raw || /^\d+$/.test(raw)) return raw;
+  return raw.match(/(\d+)\D*$/)?.[1] ?? raw;
+}
+
+async function saveNotificationForm() {
+  await state.repository.saveNotificationSettings(state.setupPassword, {
+    enabled: Boolean(elements.notifyEnabled?.checked),
+    channel_access_key: elements.notifyAccessKey?.value.trim() ?? "",
+    channel_access_secret: elements.notifyAccessSecret?.value.trim() ?? "",
+    channel_group_id: readGroupIdInput(),
+    bot_name: elements.notifyBotName?.value.trim() ?? "",
+    open_report_time: elements.notifyOpenTime?.value || "10:00",
+    close_report_time: elements.notifyCloseTime?.value || "20:00",
+  });
+}
+
+async function waitForHttpResponse(requestId) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await new Promise((done) => window.setTimeout(done, 1000));
+    const response = await state.repository.getHttpResponse(state.setupPassword, requestId);
+    if (!response?.pending) return response;
+  }
+  return null;
+}
+
+async function withNotifyButtons(action) {
+  const buttons = [elements.notifyLoadGroups, elements.notifyTestOpen, elements.notifyTestClose];
+  buttons.forEach((button) => {
+    if (button) button.disabled = true;
+  });
+  try {
+    await action();
+  } finally {
+    buttons.forEach((button) => {
+      if (button) button.disabled = false;
+    });
+  }
+}
+
+async function sendTestReport(checklistType) {
+  if (!state.repository?.supportsNotifications) {
+    window.alert("채널톡 알림은 Supabase 연결 모드에서만 사용할 수 있습니다.");
+    return;
+  }
+  const label = getChecklistLabel(checklistType);
+  if (!window.confirm(`지금 ${label} 체크 결과를 채널톡으로 보낼까요?`)) return;
+
+  await withNotifyButtons(async () => {
+    try {
+      await saveNotificationForm();
+      setNotifyStatus(`${label} 결과를 보내는 중입니다...`);
+      const requestId = await state.repository.sendTestReport(state.setupPassword, checklistType);
+      const failure = describeHttpResult(await waitForHttpResponse(requestId));
+      await loadNotificationSettings();
+      if (failure) window.alert(`테스트 발송에 실패했습니다.\n${failure}`);
+      else showToast(`${label} 결과를 채널톡으로 보냈습니다.`);
+    } catch (error) {
+      setNotifyStatus(`테스트 발송에 실패했습니다.\n${describeNotifyError(error)}`);
+    }
+  });
+}
+
+async function loadChannelGroups() {
+  if (!state.repository?.supportsNotifications) {
+    window.alert("채널톡 알림은 Supabase 연결 모드에서만 사용할 수 있습니다.");
+    return;
+  }
+
+  await withNotifyButtons(async () => {
+    try {
+      await saveNotificationForm();
+      setNotifyStatus("팀챗 목록을 불러오는 중입니다...");
+      const requestId = await state.repository.requestChannelGroups(state.setupPassword);
+      const response = await waitForHttpResponse(requestId);
+      const failure = describeHttpResult(response);
+      if (failure) {
+        setNotifyStatus(`팀챗 목록을 불러오지 못했습니다.\n${failure}`);
+        return;
+      }
+
+      const groups = JSON.parse(response.content || "{}").groups ?? [];
+      const select = elements.notifyGroupSelect;
+      if (!groups.length) {
+        setNotifyStatus("불러온 팀챗이 없습니다. 채널톡에서 팀챗을 먼저 만들어 주세요.");
+        return;
+      }
+      setHtml(
+        select,
+        [
+          '<option value="">알림을 받을 팀챗을 선택하세요</option>',
+          ...groups.map(
+            (group) =>
+              `<option value="${escapeHtml(group.id)}" ${String(group.id) === readGroupIdInput() ? "selected" : ""}>${escapeHtml(group.name ?? "")} (#${escapeHtml(group.id)})</option>`,
+          ),
+        ].join(""),
+      );
+      toggleClass(select, "is-hidden", false);
+      setNotifyStatus(`팀챗 ${groups.length}개를 불러왔습니다. 목록에서 선택한 뒤 알림 설정을 저장해 주세요.`);
+    } catch (error) {
+      setNotifyStatus(`팀챗 목록을 불러오지 못했습니다.\n${describeNotifyError(error)}`);
+    }
+  });
+}
+
+function bindNotificationForm() {
+  elements.notifyForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.repository?.supportsNotifications) {
+      window.alert("채널톡 알림은 Supabase 연결 모드에서만 사용할 수 있습니다.");
+      return;
+    }
+    try {
+      await saveNotificationForm();
+      await loadNotificationSettings();
+      showToast("알림 설정을 저장했습니다.");
+    } catch (error) {
+      window.alert(`알림 설정 저장에 실패했습니다.\n${describeNotifyError(error)}`);
+    }
+  });
+
+  elements.notifyGroupSelect?.addEventListener("change", () => {
+    if (elements.notifyGroupSelect.value && elements.notifyGroupId) {
+      elements.notifyGroupId.value = elements.notifyGroupSelect.value;
+    }
+  });
+  elements.notifyLoadGroups?.addEventListener("click", loadChannelGroups);
+  elements.notifyTestOpen?.addEventListener("click", () => sendTestReport("open"));
+  elements.notifyTestClose?.addEventListener("click", () => sendTestReport("close"));
 }
 
 function activatePanel(name) {
@@ -2244,8 +2554,10 @@ function bindForms() {
         return;
       }
       state.setupUnlocked = true;
+      state.setupPassword = password;
       if (elements.setupPassword) elements.setupPassword.value = "";
       renderSetupAccess();
+      loadNotificationSettings();
     } catch (error) {
       window.alert(`설정 잠금 해제에 실패했습니다.\n${getErrorMessage(error)}`);
     }
@@ -2253,8 +2565,11 @@ function bindForms() {
 
   elements.setupLockButton?.addEventListener("click", () => {
     state.setupUnlocked = false;
+    state.setupPassword = "";
     renderSetupAccess();
   });
+
+  bindNotificationForm();
 
   elements.passwordForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2267,6 +2582,7 @@ function bindForms() {
 
     try {
       await state.repository.changePassword(currentPassword, newPassword);
+      if (state.setupUnlocked) state.setupPassword = newPassword;
       if (elements.currentPassword) elements.currentPassword.value = "";
       if (elements.newPassword) elements.newPassword.value = "";
       window.alert("비밀번호를 변경했습니다.");
@@ -2324,8 +2640,10 @@ function bindForms() {
       await state.repository.updateSettings({
         history_limit: historyLimit,
         show_employee_name: Boolean(elements.showEmployeeToggle?.checked),
+        use_employee_feature: Boolean(elements.useEmployeeToggle?.checked),
       });
       await refresh();
+      showToast("설정을 저장했습니다.");
     } catch (error) {
       if (isMissingSupabaseTable(error)) {
         showSchemaHelp(error);
@@ -2364,6 +2682,7 @@ async function init() {
     bindForms();
     state.repository = await createRepository();
     await refresh({ includeHistory: false });
+    startRealtimeSync();
 
   } catch (error) {
     setLoading(false);

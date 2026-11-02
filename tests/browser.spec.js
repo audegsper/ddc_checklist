@@ -43,6 +43,44 @@ test('demo renders all templates and persists a completed checklist after reload
   expect(errors).toEqual([]);
 });
 
+test('employee feature can be turned off and other open pages update without reload', async ({ page, context }) => {
+  await context.route('**/app-config.js', (route) => route.fulfill({ contentType: 'text/javascript', body: 'window.__APP_CONFIG__ = { useSupabase: false };' }));
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('dialog', (dialog) => dialog.accept());
+  await page.goto(base);
+  await expect(page.locator('#app-loading')).toBeHidden();
+
+  await page.locator('#setup-open-button').click();
+  await page.locator('#setup-password').fill('8883');
+  await page.locator('#setup-auth-form button').click();
+  await page.locator('#use-employee-toggle').uncheck();
+  await page.locator('#settings-form button[type="submit"]').click();
+  await page.locator('#setup-close-button').click();
+  await expect(page.locator('#employee-card')).toBeHidden();
+
+  const other = await context.newPage();
+  other.on('dialog', (dialog) => dialog.accept());
+  await other.goto(base);
+  await expect(other.locator('#app-loading')).toBeHidden();
+  await expect(other.locator('#employee-card')).toBeHidden();
+
+  const summary = '[data-space-id="space_demo_1"] [data-action="toggle-summary-check"][data-checklist-type="open"]';
+  await page.locator(summary).check();
+  await expect(page.locator(summary)).toBeChecked();
+  await expect(other.locator(summary)).toBeChecked();
+
+  await page.locator('[data-space-id="space_demo_1"] [data-action="open-space-sheet"]').click();
+  await page.locator('#space-sheet-body [data-role="shared-comment-input"]').fill('정수기 점검 필요');
+  await page.locator('#space-sheet-body [data-action="save-sheet-comment"]').click();
+  await expect(page.locator('#space-sheet-body .comment-item')).toContainText('정수기 점검 필요');
+  await expect(page.locator('#space-sheet-body .comment-item')).not.toContainText('닥디');
+  await expect(page.locator('#space-sheet-body [data-action="delete-comment"]')).toBeVisible();
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('ddc-checklist-state-v4')).current_comments[0].employee_name);
+  expect(stored).toBe('닥디');
+  expect(errors).toEqual([]);
+});
+
 test('unreachable database shows retry and never substitutes demo items', async ({ page }) => {
   await page.route('https://*.supabase.co/**', (route) => route.abort('namenotresolved'));
   await page.goto(base);

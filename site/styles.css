@@ -1340,3 +1340,26 @@ button:hover,
   }
 
 }
+
+.notify-time-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.notify-select {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--text);
+}
+
+#notify-status {
+  white-space: pre-line;
+}
+
+#notify-status:empty {
+  display: none;
+}

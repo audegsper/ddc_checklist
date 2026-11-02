@@ -4,6 +4,14 @@ import { createTimedFetch, readAll } from "./network.js";
 
 const CHECKLIST_TYPES = ["open", "close"];
 const CATEGORY_FALLBACK_KEY = "ddc-checklist-current-category-checks-fallback-v1";
+const REALTIME_TABLES = [
+  "employees",
+  "spaces",
+  "app_settings",
+  "current_checks",
+  "current_category_checks",
+  "current_comments",
+];
 
 function getYesterdayKey(timezone = "Asia/Seoul") {
   return getDateKey(new Date(Date.now() - 24 * 60 * 60 * 1000), timezone);
@@ -15,6 +23,7 @@ function normalizeBootstrap(data) {
     history_limit: 10,
     timezone: "Asia/Seoul",
     show_employee_name: true,
+    use_employee_feature: true,
     admin_password: "8883",
     last_daily_archive_date: null,
   };
@@ -410,8 +419,51 @@ export async function createSupabaseRepository(config, suppliedClient) {
     await pruneArchivedChecks();
   }
 
+  async function callRpc(name, params) {
+    const { data, error } = await client.rpc(name, params);
+    if (error) throw error;
+    return data;
+  }
+
   return {
     maintainDailyArchive: autoArchiveIfNeeded,
+    supportsNotifications: true,
+
+    subscribeChanges(onChange) {
+      const channel = client.channel("ddc-checklist-changes");
+      REALTIME_TABLES.forEach((table) => {
+        channel.on("postgres_changes", { event: "*", schema: "public", table }, () => onChange(table));
+      });
+      channel.subscribe((status) => {
+        // Changes made while the socket was down are picked up by a refetch on reconnect.
+        if (status === "SUBSCRIBED") onChange("reconnect");
+      });
+      return () => client.removeChannel(channel);
+    },
+
+    async notifyIfComplete(checklistType) {
+      await callRpc("ddc_notify_if_complete", { p_type: checklistType });
+    },
+
+    async getNotificationSettings(password) {
+      return callRpc("ddc_get_notification_settings", { p_password: password });
+    },
+
+    async saveNotificationSettings(password, settings) {
+      await callRpc("ddc_save_notification_settings", { p_password: password, p_settings: settings });
+    },
+
+    async sendTestReport(password, checklistType) {
+      return callRpc("ddc_send_test_report", { p_password: password, p_type: checklistType });
+    },
+
+    async requestChannelGroups(password) {
+      return callRpc("ddc_request_channel_groups", { p_password: password });
+    },
+
+    async getHttpResponse(password, requestId) {
+      return callRpc("ddc_get_http_response", { p_password: password, p_request_id: requestId });
+    },
 
     async getBootstrap({ includeHistory = true } = {}) {
       const workDate = getWorkDate(timezone);
@@ -617,6 +669,7 @@ export async function createSupabaseRepository(config, suppliedClient) {
           history_limit: Number(patch.history_limit ?? 10),
           timezone,
           show_employee_name: Boolean(patch.show_employee_name ?? true),
+          use_employee_feature: Boolean(patch.use_employee_feature ?? true),
           admin_password: patch.admin_password ?? "8883",
           last_daily_archive_date: null,
         });

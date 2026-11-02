@@ -42,6 +42,7 @@ const demoState = {
     history_limit: 10,
     timezone: "Asia/Seoul",
     show_employee_name: true,
+    use_employee_feature: true,
     admin_password: "8883",
     last_daily_archive_date: null,
     updated_at: nowIso(),
@@ -353,6 +354,19 @@ function autoArchiveIfNeeded(state, timezone = "Asia/Seoul") {
 
 export function createLocalRepository(timezone = "Asia/Seoul") {
   return {
+    supportsNotifications: false,
+
+    // Demo mode keeps tabs of the same browser in sync.
+    subscribeChanges(onChange) {
+      const handleStorage = (event) => {
+        if (event.key === STORAGE_KEY) onChange("storage");
+      };
+      window.addEventListener("storage", handleStorage);
+      return () => window.removeEventListener("storage", handleStorage);
+    },
+
+    async notifyIfComplete() {},
+
     async getBootstrap() {
       const state = readState();
       autoArchiveIfNeeded(state, timezone);
