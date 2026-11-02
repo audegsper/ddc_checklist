@@ -538,21 +538,29 @@ begin
   end if;
 end $$;
 
--- 채널톡 결과 알림
+-- 텔레그램 결과 알림
 create extension if not exists pg_net with schema extensions;
 create extension if not exists pg_cron with schema pg_catalog;
 
 create table if not exists public.notification_settings (
   id integer primary key default 1 check (id = 1),
   enabled boolean not null default false,
-  channel_access_key text not null default '',
-  channel_access_secret text not null default '',
-  channel_group_id text not null default '',
-  bot_name text not null default 'DD 체크리스트',
+  telegram_bot_token text not null default '',
+  telegram_chat_id text not null default '',
   open_report_time time not null default '10:00',
   close_report_time time not null default '20:00',
   updated_at timestamptz not null default now()
 );
+
+alter table public.notification_settings add column if not exists telegram_bot_token text not null default '';
+alter table public.notification_settings add column if not exists telegram_chat_id text not null default '';
+-- 이전 채널톡 버전에서 만든 열과 함수를 정리합니다.
+alter table public.notification_settings drop column if exists channel_access_key;
+alter table public.notification_settings drop column if exists channel_access_secret;
+alter table public.notification_settings drop column if exists channel_group_id;
+alter table public.notification_settings drop column if exists bot_name;
+drop function if exists public.ddc_send_channel_message(text);
+drop function if exists public.ddc_request_channel_groups(text);
 
 insert into public.notification_settings (id) values (1) on conflict (id) do nothing;
 
@@ -775,8 +783,8 @@ begin
   return next;
 end $$;
 
--- 채널톡 Open API로 팀챗 그룹에 메시지를 보냅니다. pg_net 요청 id를 돌려줍니다.
-create or replace function public.ddc_send_channel_message(p_text text)
+-- 텔레그램 봇으로 메시지를 보냅니다. pg_net 요청 id를 돌려줍니다.
+create or replace function public.ddc_send_telegram_message(p_text text)
 returns bigint
 language plpgsql
 security definer
@@ -787,32 +795,18 @@ declare
   request_id bigint;
 begin
   select * into config from public.notification_settings where id = 1;
-  if not found
-    or config.channel_access_key = ''
-    or config.channel_access_secret = ''
-    or config.channel_group_id = '' then
-    raise exception '채널톡 Access Key, Access Secret, 팀챗 그룹 ID를 먼저 저장해 주세요.';
+  if not found or config.telegram_bot_token = '' or config.telegram_chat_id = '' then
+    raise exception '텔레그램 봇 토큰과 채팅 ID를 먼저 저장해 주세요.';
   end if;
 
   select net.http_post(
-    url := 'https://api.channel.io/open/v5/groups/' || config.channel_group_id || '/messages',
+    url := 'https://api.telegram.org/bot' || config.telegram_bot_token || '/sendMessage',
     body := jsonb_build_object(
-      'blocks',
-      (
-        select jsonb_agg(jsonb_build_object('type', 'text', 'value', line) order by ord)
-        from regexp_split_to_table(p_text, E'\n') with ordinality as split(line, ord)
-        where line <> ''
-      )
+      'chat_id', config.telegram_chat_id,
+      'text', left(p_text, 4000),
+      'disable_web_page_preview', true
     ),
-    params := case
-      when config.bot_name <> '' then jsonb_build_object('botName', config.bot_name)
-      else '{}'::jsonb
-    end,
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'x-access-key', config.channel_access_key,
-      'x-access-secret', config.channel_access_secret
-    ),
+    headers := jsonb_build_object('Content-Type', 'application/json'),
     timeout_milliseconds := 10000
   )
   into request_id;
@@ -895,7 +889,7 @@ begin
     end if;
 
     update public.notification_logs
-    set request_id = public.ddc_send_channel_message(report.message)
+    set request_id = public.ddc_send_telegram_message(report.message)
     where id = log_id;
   end loop;
 end $$;
@@ -948,14 +942,12 @@ begin
 
   return jsonb_build_object(
     'enabled', coalesce(config.enabled, false),
-    'channel_group_id', coalesce(config.channel_group_id, ''),
-    'bot_name', coalesce(config.bot_name, ''),
+    'telegram_chat_id', coalesce(config.telegram_chat_id, ''),
     'open_report_time', to_char(coalesce(config.open_report_time, '10:00'::time), 'HH24:MI'),
     'close_report_time', to_char(coalesce(config.close_report_time, '20:00'::time), 'HH24:MI'),
-    'has_access_key', coalesce(config.channel_access_key, '') <> '',
-    'has_access_secret', coalesce(config.channel_access_secret, '') <> '',
-    'access_key_hint', case when coalesce(config.channel_access_key, '') = '' then ''
-      else '••••' || right(config.channel_access_key, 4) end,
+    'has_bot_token', coalesce(config.telegram_bot_token, '') <> '',
+    'bot_token_hint', case when coalesce(config.telegram_bot_token, '') = '' then ''
+      else '••••' || right(config.telegram_bot_token, 4) end,
     'logs', logs
   );
 end $$;
@@ -967,25 +959,23 @@ security definer
 set search_path = public
 as $$
 declare
-  next_group_id text := trim(coalesce(p_settings ->> 'channel_group_id', ''));
+  next_token text := trim(coalesce(p_settings ->> 'telegram_bot_token', ''));
+  next_chat_id text := trim(coalesce(p_settings ->> 'telegram_chat_id', ''));
 begin
   perform public.ddc_assert_admin(p_password);
-  if next_group_id <> '' and next_group_id !~ '^[0-9]+$' then
-    raise exception '팀챗 그룹 ID는 숫자만 입력해 주세요.';
+  if next_token <> '' and next_token !~ '^[0-9]+:[A-Za-z0-9_-]+$' then
+    raise exception '봇 토큰 형식이 올바르지 않습니다. BotFather가 준 123456:ABC... 형태의 토큰을 그대로 붙여넣어 주세요.';
+  end if;
+  if next_chat_id <> '' and next_chat_id !~ '^-?[0-9]+$' then
+    raise exception '채팅 ID는 숫자만 입력해 주세요.';
   end if;
 
   insert into public.notification_settings (id) values (1) on conflict (id) do nothing;
 
   update public.notification_settings
   set enabled = coalesce((p_settings ->> 'enabled')::boolean, enabled),
-      channel_access_key = case
-        when coalesce(trim(p_settings ->> 'channel_access_key'), '') = '' then channel_access_key
-        else trim(p_settings ->> 'channel_access_key') end,
-      channel_access_secret = case
-        when coalesce(trim(p_settings ->> 'channel_access_secret'), '') = '' then channel_access_secret
-        else trim(p_settings ->> 'channel_access_secret') end,
-      channel_group_id = next_group_id,
-      bot_name = left(trim(coalesce(p_settings ->> 'bot_name', bot_name)), 30),
+      telegram_bot_token = case when next_token = '' then telegram_bot_token else next_token end,
+      telegram_chat_id = next_chat_id,
       open_report_time = coalesce(nullif(p_settings ->> 'open_report_time', '')::time, open_report_time),
       close_report_time = coalesce(nullif(p_settings ->> 'close_report_time', '')::time, close_report_time),
       updated_at = now()
@@ -1011,7 +1001,7 @@ begin
 
   local_date := (now() at time zone coalesce((select timezone from public.app_settings limit 1), 'Asia/Seoul'))::date;
   select * into report from public.ddc_build_checklist_report(p_type, local_date, 'manual');
-  v_request_id := public.ddc_send_channel_message(report.message);
+  v_request_id := public.ddc_send_telegram_message(report.message);
 
   insert into public.notification_logs (work_date, checklist_type, trigger, message, request_id)
   values (local_date, p_type, 'manual', report.message, v_request_id);
@@ -1019,8 +1009,8 @@ begin
   return v_request_id;
 end $$;
 
--- 저장된 키로 팀챗 그룹 목록을 요청합니다. 결과는 ddc_get_http_response로 확인합니다.
-create or replace function public.ddc_request_channel_groups(p_password text)
+-- 봇에게 최근 온 메시지를 요청해 채팅 ID를 찾습니다. 결과는 ddc_get_http_response로 확인합니다.
+create or replace function public.ddc_request_telegram_updates(p_password text)
 returns bigint
 language plpgsql
 security definer
@@ -1032,17 +1022,12 @@ declare
 begin
   perform public.ddc_assert_admin(p_password);
   select * into config from public.notification_settings where id = 1;
-  if not found or config.channel_access_key = '' or config.channel_access_secret = '' then
-    raise exception 'Access Key와 Access Secret을 먼저 저장해 주세요.';
+  if not found or config.telegram_bot_token = '' then
+    raise exception '텔레그램 봇 토큰을 먼저 저장해 주세요.';
   end if;
 
   select net.http_get(
-    url := 'https://api.channel.io/open/v5/groups',
-    params := jsonb_build_object('limit', '500'),
-    headers := jsonb_build_object(
-      'x-access-key', config.channel_access_key,
-      'x-access-secret', config.channel_access_secret
-    ),
+    url := 'https://api.telegram.org/bot' || config.telegram_bot_token || '/getUpdates',
     timeout_milliseconds := 10000
   )
   into request_id;
@@ -1080,14 +1065,14 @@ end $$;
 
 revoke all on function public.ddc_assert_admin(text) from public, anon, authenticated;
 revoke all on function public.ddc_build_checklist_report(text, date, text) from public, anon, authenticated;
-revoke all on function public.ddc_send_channel_message(text) from public, anon, authenticated;
+revoke all on function public.ddc_send_telegram_message(text) from public, anon, authenticated;
 revoke all on function public.ddc_run_checklist_notifications(text) from public, anon, authenticated;
 
 grant execute on function public.ddc_notify_if_complete(text) to anon, authenticated;
 grant execute on function public.ddc_get_notification_settings(text) to anon, authenticated;
 grant execute on function public.ddc_save_notification_settings(text, jsonb) to anon, authenticated;
 grant execute on function public.ddc_send_test_report(text, text) to anon, authenticated;
-grant execute on function public.ddc_request_channel_groups(text) to anon, authenticated;
+grant execute on function public.ddc_request_telegram_updates(text) to anon, authenticated;
 grant execute on function public.ddc_get_http_response(text, bigint) to anon, authenticated;
 
 select cron.schedule(

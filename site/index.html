@@ -200,9 +200,9 @@
             </div>
 
             <div class="card stack">
-              <h3>채널톡 결과 알림</h3>
+              <h3>텔레그램 결과 알림</h3>
               <p class="helper-text">
-                일요일을 제외하고 정해진 시각에 오픈/마감 체크 결과를 채널톡 팀챗으로 보냅니다.
+                일요일을 제외하고 정해진 시각에 오픈/마감 체크 결과를 텔레그램으로 보냅니다.
                 그 전에 모든 공간이 체크되면 바로 보냅니다.
               </p>
               <form id="notify-form" class="settings-form stack">
@@ -211,22 +211,14 @@
                   <span>자동 발송 사용</span>
                 </label>
                 <label class="field">
-                  <span class="field__label">Access Key</span>
-                  <input id="notify-access-key" type="password" autocomplete="off" maxlength="200" />
+                  <span class="field__label">봇 토큰</span>
+                  <input id="notify-bot-token" type="password" autocomplete="off" maxlength="120" placeholder="BotFather가 준 123456:ABC... 토큰" />
                 </label>
                 <label class="field">
-                  <span class="field__label">Access Secret</span>
-                  <input id="notify-access-secret" type="password" autocomplete="off" maxlength="200" />
+                  <span class="field__label">채팅 ID</span>
+                  <input id="notify-chat-id" type="text" inputmode="numeric" maxlength="20" placeholder="'채팅 ID 찾기'로 자동 입력" />
                 </label>
-                <label class="field">
-                  <span class="field__label">팀챗 그룹 ID</span>
-                  <input id="notify-group-id" type="text" inputmode="numeric" maxlength="20" placeholder="예: 123456" />
-                </label>
-                <select id="notify-group-select" class="notify-select is-hidden" aria-label="팀챗 그룹 선택"></select>
-                <label class="field">
-                  <span class="field__label">보내는 봇 이름</span>
-                  <input id="notify-bot-name" type="text" maxlength="30" placeholder="DD 체크리스트" />
-                </label>
+                <select id="notify-chat-select" class="notify-select is-hidden" aria-label="받을 채팅 선택"></select>
                 <div class="notify-time-row">
                   <label class="field">
                     <span class="field__label">오픈 결과 발송</span>
@@ -240,7 +232,7 @@
                 <button type="submit">알림 설정 저장</button>
               </form>
               <div class="space-card__actions">
-                <button id="notify-load-groups" class="secondary-button" type="button">팀챗 목록 불러오기</button>
+                <button id="notify-find-chat" class="secondary-button" type="button">채팅 ID 찾기</button>
                 <button id="notify-test-open" class="secondary-button" type="button">오픈 결과 테스트 발송</button>
                 <button id="notify-test-close" class="secondary-button" type="button">마감 결과 테스트 발송</button>
               </div>

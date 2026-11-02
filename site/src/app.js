@@ -107,14 +107,12 @@ function initializeElements() {
     employeeCard: document.getElementById("employee-card"),
     notifyForm: document.getElementById("notify-form"),
     notifyEnabled: document.getElementById("notify-enabled"),
-    notifyAccessKey: document.getElementById("notify-access-key"),
-    notifyAccessSecret: document.getElementById("notify-access-secret"),
-    notifyGroupId: document.getElementById("notify-group-id"),
-    notifyGroupSelect: document.getElementById("notify-group-select"),
-    notifyBotName: document.getElementById("notify-bot-name"),
+    notifyBotToken: document.getElementById("notify-bot-token"),
+    notifyChatId: document.getElementById("notify-chat-id"),
+    notifyChatSelect: document.getElementById("notify-chat-select"),
     notifyOpenTime: document.getElementById("notify-open-time"),
     notifyCloseTime: document.getElementById("notify-close-time"),
-    notifyLoadGroups: document.getElementById("notify-load-groups"),
+    notifyFindChat: document.getElementById("notify-find-chat"),
     notifyTestOpen: document.getElementById("notify-test-open"),
     notifyTestClose: document.getElementById("notify-test-close"),
     notifyStatus: document.getElementById("notify-status"),
@@ -2279,15 +2277,17 @@ function describeNotifyError(error) {
 
 function describeHttpResult(response) {
   if (!response) return "응답을 기다리는 중입니다. 잠시 후 설정을 다시 열어 결과를 확인해 주세요.";
-  if (response.timed_out) return "채널톡 서버 응답 시간이 초과되었습니다.";
+  if (response.timed_out) return "텔레그램 서버 응답 시간이 초과되었습니다.";
   if (response.error) return `요청 실패: ${response.error}`;
   if (response.status_code >= 200 && response.status_code < 300) return "";
-  const hint = response.status_code === 401
-    ? " (Access Key/Secret을 확인해 주세요)"
-    : response.status_code === 404
-      ? " (팀챗 그룹 ID를 확인해 주세요)"
-      : "";
-  return `채널톡 오류 ${response.status_code}${hint}\n${String(response.content ?? "").slice(0, 300)}`;
+  const hint = response.status_code === 401 || response.status_code === 404
+    ? " (봇 토큰을 확인해 주세요)"
+    : response.status_code === 400
+      ? " (채팅 ID를 확인하고, 텔레그램에서 봇에게 먼저 /start를 보내 주세요)"
+      : response.status_code === 403
+        ? " (봇이 차단되었거나 채팅방에서 나갔습니다)"
+        : "";
+  return `텔레그램 오류 ${response.status_code}${hint}\n${String(response.content ?? "").slice(0, 300)}`;
 }
 
 function formatNotificationLog(log) {
@@ -2303,26 +2303,27 @@ function formatNotificationLog(log) {
   return parts.join(" · ");
 }
 
+function ensureNotificationsAvailable() {
+  if (state.repository?.supportsNotifications) return true;
+  window.alert("텔레그램 알림은 Supabase 연결 모드에서만 사용할 수 있습니다.");
+  return false;
+}
+
 async function loadNotificationSettings() {
   if (!elements.notifyForm) return;
   if (!state.repository?.supportsNotifications) {
-    setNotifyStatus("채널톡 알림은 Supabase 연결 모드에서만 사용할 수 있습니다.");
+    setNotifyStatus("텔레그램 알림은 Supabase 연결 모드에서만 사용할 수 있습니다.");
     return;
   }
 
   try {
     const settings = await state.repository.getNotificationSettings(state.setupPassword);
     elements.notifyEnabled.checked = Boolean(settings.enabled);
-    elements.notifyAccessKey.value = "";
-    elements.notifyAccessSecret.value = "";
-    elements.notifyAccessKey.placeholder = settings.has_access_key
-      ? `저장됨 ${settings.access_key_hint} · 바꿀 때만 입력`
-      : "채널톡 API Access Key";
-    elements.notifyAccessSecret.placeholder = settings.has_access_secret
-      ? "저장됨 · 바꿀 때만 입력"
-      : "채널톡 API Access Secret";
-    elements.notifyGroupId.value = settings.channel_group_id ?? "";
-    elements.notifyBotName.value = settings.bot_name ?? "";
+    elements.notifyBotToken.value = "";
+    elements.notifyBotToken.placeholder = settings.has_bot_token
+      ? `저장됨 ${settings.bot_token_hint} · 바꿀 때만 입력`
+      : "BotFather가 준 123456:ABC... 토큰";
+    elements.notifyChatId.value = settings.telegram_chat_id ?? "";
     elements.notifyOpenTime.value = settings.open_report_time ?? "10:00";
     elements.notifyCloseTime.value = settings.close_report_time ?? "20:00";
     const logs = settings.logs ?? [];
@@ -2334,20 +2335,11 @@ async function loadNotificationSettings() {
   }
 }
 
-// Accepts a bare id or a pasted team chat URL whose last number is the group id.
-function readGroupIdInput() {
-  const raw = elements.notifyGroupId?.value.trim() ?? "";
-  if (!raw || /^\d+$/.test(raw)) return raw;
-  return raw.match(/(\d+)\D*$/)?.[1] ?? raw;
-}
-
 async function saveNotificationForm() {
   await state.repository.saveNotificationSettings(state.setupPassword, {
     enabled: Boolean(elements.notifyEnabled?.checked),
-    channel_access_key: elements.notifyAccessKey?.value.trim() ?? "",
-    channel_access_secret: elements.notifyAccessSecret?.value.trim() ?? "",
-    channel_group_id: readGroupIdInput(),
-    bot_name: elements.notifyBotName?.value.trim() ?? "",
+    telegram_bot_token: elements.notifyBotToken?.value.trim() ?? "",
+    telegram_chat_id: elements.notifyChatId?.value.trim() ?? "",
     open_report_time: elements.notifyOpenTime?.value || "10:00",
     close_report_time: elements.notifyCloseTime?.value || "20:00",
   });
@@ -2363,7 +2355,7 @@ async function waitForHttpResponse(requestId) {
 }
 
 async function withNotifyButtons(action) {
-  const buttons = [elements.notifyLoadGroups, elements.notifyTestOpen, elements.notifyTestClose];
+  const buttons = [elements.notifyFindChat, elements.notifyTestOpen, elements.notifyTestClose];
   buttons.forEach((button) => {
     if (button) button.disabled = true;
   });
@@ -2377,12 +2369,9 @@ async function withNotifyButtons(action) {
 }
 
 async function sendTestReport(checklistType) {
-  if (!state.repository?.supportsNotifications) {
-    window.alert("채널톡 알림은 Supabase 연결 모드에서만 사용할 수 있습니다.");
-    return;
-  }
+  if (!ensureNotificationsAvailable()) return;
   const label = getChecklistLabel(checklistType);
-  if (!window.confirm(`지금 ${label} 체크 결과를 채널톡으로 보낼까요?`)) return;
+  if (!window.confirm(`지금 ${label} 체크 결과를 텔레그램으로 보낼까요?`)) return;
 
   await withNotifyButtons(async () => {
     try {
@@ -2392,51 +2381,73 @@ async function sendTestReport(checklistType) {
       const failure = describeHttpResult(await waitForHttpResponse(requestId));
       await loadNotificationSettings();
       if (failure) window.alert(`테스트 발송에 실패했습니다.\n${failure}`);
-      else showToast(`${label} 결과를 채널톡으로 보냈습니다.`);
+      else showToast(`${label} 결과를 텔레그램으로 보냈습니다.`);
     } catch (error) {
       setNotifyStatus(`테스트 발송에 실패했습니다.\n${describeNotifyError(error)}`);
     }
   });
 }
 
-async function loadChannelGroups() {
-  if (!state.repository?.supportsNotifications) {
-    window.alert("채널톡 알림은 Supabase 연결 모드에서만 사용할 수 있습니다.");
-    return;
-  }
+function describeTelegramChat(chat) {
+  const name = chat.title || [chat.first_name, chat.last_name].filter(Boolean).join(" ") || chat.username || "이름 없음";
+  const kind = chat.type === "private" ? "개인" : chat.type === "channel" ? "채널" : "그룹";
+  return `${name} (${kind}, ${chat.id})`;
+}
+
+// Chat ids come from messages people sent to the bot, so ask them to message it first.
+async function findTelegramChat() {
+  if (!ensureNotificationsAvailable()) return;
 
   await withNotifyButtons(async () => {
     try {
       await saveNotificationForm();
-      setNotifyStatus("팀챗 목록을 불러오는 중입니다...");
-      const requestId = await state.repository.requestChannelGroups(state.setupPassword);
+      setNotifyStatus("봇에게 온 메시지에서 채팅을 찾는 중입니다...");
+      const requestId = await state.repository.requestTelegramUpdates(state.setupPassword);
       const response = await waitForHttpResponse(requestId);
       const failure = describeHttpResult(response);
       if (failure) {
-        setNotifyStatus(`팀챗 목록을 불러오지 못했습니다.\n${failure}`);
+        setNotifyStatus(`채팅을 찾지 못했습니다.\n${failure}`);
         return;
       }
 
-      const groups = JSON.parse(response.content || "{}").groups ?? [];
-      const select = elements.notifyGroupSelect;
-      if (!groups.length) {
-        setNotifyStatus("불러온 팀챗이 없습니다. 채널톡에서 팀챗을 먼저 만들어 주세요.");
+      const updates = JSON.parse(response.content || "{}").result ?? [];
+      const chats = new Map();
+      updates.forEach((update) => {
+        const chat = (update.message ?? update.edited_message ?? update.channel_post ?? update.my_chat_member)?.chat;
+        if (chat?.id) chats.set(String(chat.id), chat);
+      });
+      if (!chats.size) {
+        setNotifyStatus(
+          "봇에게 온 메시지가 없습니다.\n텔레그램에서 만든 봇을 찾아 '/start' 또는 아무 메시지나 보낸 뒤 다시 눌러 주세요.",
+        );
         return;
       }
+
+      const select = elements.notifyChatSelect;
+      const current = elements.notifyChatId?.value.trim() ?? "";
       setHtml(
         select,
         [
-          '<option value="">알림을 받을 팀챗을 선택하세요</option>',
-          ...groups.map(
-            (group) =>
-              `<option value="${escapeHtml(group.id)}" ${String(group.id) === readGroupIdInput() ? "selected" : ""}>${escapeHtml(group.name ?? "")} (#${escapeHtml(group.id)})</option>`,
+          '<option value="">알림을 받을 채팅을 선택하세요</option>',
+          ...[...chats.values()].map(
+            (chat) =>
+              `<option value="${escapeHtml(chat.id)}" ${String(chat.id) === current ? "selected" : ""}>${escapeHtml(describeTelegramChat(chat))}</option>`,
           ),
         ].join(""),
       );
       toggleClass(select, "is-hidden", false);
-      setNotifyStatus(`팀챗 ${groups.length}개를 불러왔습니다. 목록에서 선택한 뒤 알림 설정을 저장해 주세요.`);
+
+      if (chats.size === 1 && elements.notifyChatId) {
+        const [chat] = chats.values();
+        elements.notifyChatId.value = String(chat.id);
+        select.value = String(chat.id);
+        await saveNotificationForm();
+        setNotifyStatus(`'${describeTelegramChat(chat)}' 채팅을 찾아 저장했습니다. 테스트 발송으로 확인해 보세요.`);
+        return;
+      }
+      setNotifyStatus(`채팅 ${chats.size}개를 찾았습니다. 목록에서 선택한 뒤 알림 설정을 저장해 주세요.`);
     } catch (error) {
-      setNotifyStatus(`팀챗 목록을 불러오지 못했습니다.\n${describeNotifyError(error)}`);
+      setNotifyStatus(`채팅을 찾지 못했습니다.\n${describeNotifyError(error)}`);
     }
   });
 }
@@ -2444,10 +2455,7 @@ async function loadChannelGroups() {
 function bindNotificationForm() {
   elements.notifyForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (!state.repository?.supportsNotifications) {
-      window.alert("채널톡 알림은 Supabase 연결 모드에서만 사용할 수 있습니다.");
-      return;
-    }
+    if (!ensureNotificationsAvailable()) return;
     try {
       await saveNotificationForm();
       await loadNotificationSettings();
@@ -2457,12 +2465,12 @@ function bindNotificationForm() {
     }
   });
 
-  elements.notifyGroupSelect?.addEventListener("change", () => {
-    if (elements.notifyGroupSelect.value && elements.notifyGroupId) {
-      elements.notifyGroupId.value = elements.notifyGroupSelect.value;
+  elements.notifyChatSelect?.addEventListener("change", () => {
+    if (elements.notifyChatSelect.value && elements.notifyChatId) {
+      elements.notifyChatId.value = elements.notifyChatSelect.value;
     }
   });
-  elements.notifyLoadGroups?.addEventListener("click", loadChannelGroups);
+  elements.notifyFindChat?.addEventListener("click", findTelegramChat);
   elements.notifyTestOpen?.addEventListener("click", () => sendTestReport("open"));
   elements.notifyTestClose?.addEventListener("click", () => sendTestReport("close"));
 }

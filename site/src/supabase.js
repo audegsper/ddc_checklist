@@ -457,8 +457,8 @@ export async function createSupabaseRepository(config, suppliedClient) {
       return callRpc("ddc_send_test_report", { p_password: password, p_type: checklistType });
     },
 
-    async requestChannelGroups(password) {
-      return callRpc("ddc_request_channel_groups", { p_password: password });
+    async requestTelegramUpdates(password) {
+      return callRpc("ddc_request_telegram_updates", { p_password: password });
     },
 
     async getHttpResponse(password, requestId) {
